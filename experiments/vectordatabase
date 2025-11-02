@@ -1,0 +1,21 @@
+import chromadb
+from sentence_transformers import SentenceTransformer
+
+client = chromadb.Client() #local database client
+collection = client.create_collection(name="files") #collection to store vectors 
+model = SentenceTransformer("all-MiniLM-L6-v2") #embedding model
+documents = [
+    "A research paper about neural networks",
+    "A recipe for apple pie",
+    "A guide to hiking in the mountains"
+]
+ids = ["file1", "file2", "file3"]
+
+embeddings = model.encode(documents).tolist() #make embeddings add to database
+collection.add(documents=documents, ids=ids, embeddings=embeddings)
+
+query = "deep learning" #test semantic search
+query_embedding = model.encode([query]).tolist()
+results = collection.query(query_embeddings=query_embedding, n_results=2)
+
+print(results) 
