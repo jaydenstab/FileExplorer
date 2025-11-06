@@ -19,3 +19,7 @@ query_embedding = model.encode([query]).tolist()
 results = collection.query(query_embeddings=query_embedding, n_results=2)
 
 print(results) 
+
+#{'ids': [['file1', 'file3']], 'embeddings': None, 'documents': [['A research paper about neural networks', 'A guide to hiking in the mountains']],
+#'uris': None, 'included': ['metadatas', 'documents', 'distances'], 'data': None, 'metadatas': [[None, None]], 'distances': [[0.9720823764801025, 1.8361401557922363]]}
+#this is the output but I have no diea what it means or if its correct
