@@ -23,4 +23,64 @@
     - literally make a 50 line python file and get pdf / image classification working
 - small experiments for vector database
 
+## Semantic Search API
+
+The backend provides semantic search over PDF and text files in the `documents/` folder.
+
+### Setup
+
+1. Place 10-20 PDF or text files in the `documents/` folder
+2. Start the Django server:
+   ```bash
+   source venv/bin/activate
+   python manage.py runserver
+   ```
+
+### Endpoints
+
+#### Reindex Documents
+Rebuilds the semantic index from files in `documents/` folder.
+
+```bash
+curl -X GET "http://127.0.0.1:8000/api/reindex"
+```
+
+Response:
+```json
+{
+    "indexed_chunks": 42
+}
+```
+
+#### Search Files
+Searches for files matching a query using semantic similarity.
+
+```bash
+curl -G "http://127.0.0.1:8000/api/search" \
+  --data-urlencode "q=rhetoric" \
+  --data-urlencode "k=5"
+```
+
+Parameters:
+- `q` (required): Search query string
+- `k` (optional): Number of results to return (default: 5, max: 50)
+
+Response:
+```json
+{
+    "query": "rhetoric",
+    "results": [
+        "documents/how-to-write-good.pdf",
+        "documents/hw/essay-1.txt"
+    ]
+}
+```
+
+### Implementation Details
+
+- Uses ChromaDB for vector storage (persisted in `.chroma/` directory)
+- Uses `sentence-transformers` with `all-MiniLM-L6-v2` model for embeddings
+- Files are chunked into 1000-character segments with 200-character overlap
+- Only scans files in `documents/` folder (safety limit: 200 files max)
+
 **GITHUB**: https://github.com/jaydenstab/FileExplorer
