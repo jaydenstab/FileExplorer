@@ -11,7 +11,6 @@ from sentence_transformers import SentenceTransformer
 
 # Configuration constants
 BASE_DIR = Path(__file__).resolve().parents[1]
-DOCUMENTS_DIR = BASE_DIR / "documents"
 CHROMA_DIR = BASE_DIR / ".chroma"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # sentence-transformers model for creating embeddings
 MAX_FILES = 200  # Safety limit to prevent accidentally indexing too many files
@@ -73,12 +72,12 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
     return chunks
 
 
-def _list_files() -> List[Path]:
-    """Find all PDF and text files in the documents folder."""
-    DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+def _list_files(documents_dir: Path) -> List[Path]:
+    """Find all PDF and text files in the specified documents folder."""
+    documents_dir.mkdir(parents=True, exist_ok=True)
     files: List[Path] = []
     for ext in SUPPORTED_EXTS:
-        files.extend(sorted(DOCUMENTS_DIR.rglob(f"*{ext}")))
+        files.extend(sorted(documents_dir.rglob(f"*{ext}")))
     return files[:MAX_FILES]
 
 
@@ -87,26 +86,36 @@ def _relative_path(p: Path) -> str:
     return str(p.resolve().relative_to(BASE_DIR.resolve()))
 
 
-def index_documents() -> int:
+def index_documents(directory: str = "documents1") -> int:
     """
     Main indexing function: scans documents folder, extracts text, chunks it,
     creates embeddings, and stores everything in ChromaDB.
     
-    Returns the number of chunks indexed.
+    Args:
+        directory: Name of the directory to index (relative to project root, e.g., "documents1", "documents2")
+    
+    Returns:
+        The number of chunks indexed.
     """
+    # Resolve the documents directory path
+    documents_dir = BASE_DIR / directory
+    
     # Set up ChromaDB persistent storage
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     
+    # Use directory name in collection name to keep different directories separate
+    collection_name = f"files_{directory}"
+    
     # Delete existing collection to rebuild from scratch (avoids stale data)
     try:
-        client.delete_collection("files")
+        client.delete_collection(collection_name)
     except Exception:
         pass
-    collection = client.get_or_create_collection(name="files")
+    collection = client.get_or_create_collection(name=collection_name)
 
     # Find all files to index
-    files = _list_files()
+    files = _list_files(documents_dir)
     model = _get_model()
 
     # Prepare data for ChromaDB

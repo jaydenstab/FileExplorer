@@ -17,13 +17,14 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
     return out
 
 
-def search_files(query: str, k: int = 5) -> List[str]:
+def search_files(query: str, k: int = 5, directory: str = "documents1") -> List[str]:
     """
     Search for files matching a query using semantic similarity.
     
     Args:
         query: Search query string (e.g., "rhetoric", "neural networks")
         k: Number of results to return (default: 5)
+        directory: Name of the directory to search in (e.g., "documents1", "documents2")
     
     Returns:
         List of file paths (relative to project root) that match the query,
@@ -31,7 +32,13 @@ def search_files(query: str, k: int = 5) -> List[str]:
     """
     # Connect to ChromaDB
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    collection = client.get_or_create_collection(name="files")
+    collection_name = f"files_{directory}"
+    
+    # Check if collection exists, return empty list if it doesn't
+    try:
+        collection = client.get_collection(name=collection_name)
+    except Exception:
+        return []
     
     if not query or k <= 0:
         return []

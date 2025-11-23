@@ -1,2 +1,0 @@
-Neural networks are computing systems inspired by biological neural networks. They consist of interconnected nodes (neurons) organized in layers. Deep learning uses neural networks with multiple hidden layers to learn complex patterns from data. These networks are trained using backpropagation and gradient descent algorithms.
-
