@@ -13,6 +13,18 @@ interface FileItem {
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 const SEARCH_DEBOUNCE_MS = 600;
 
+type ReindexStatus =
+  | { type: 'idle' }
+  | { type: 'loading'; since: Date }
+  | { type: 'error'; message: string }
+  | { type: 'success'; files: number };
+
+type SearchStatus =
+  | { type: 'idle' }
+  | { type: 'loading'; since: Date }
+  | { type: 'error'; message: string }
+  | { type: 'success'; results: FileItem[] };
+
 // Convert backend file path to FileItem
 const pathToFileItem = (path: string, index: number): FileItem => {
   const parts = path.split('/');
@@ -28,12 +40,21 @@ const pathToFileItem = (path: string, index: number): FileItem => {
 };
 
 export default function App() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<FileItem[]>([]);
-  const [isReindexing, setIsReindexing] = useState(false);
-  const [showReindexSuccess, setShowReindexSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  // enforce invariants (e.g. "no error and success at the same time" / "no loading and success at the same time")
+  const [searchStatus, setSearchStatus] = useState<SearchStatus>({
+    type: 'idle',
+  });
+  const [reindexStatus, setReindexStatus] = useState<SearchStatus>({
+    type: 'idle',
+  });
+
+  setSearchStatus({
+    type: 'success',
+    results: [],
+  });
+
   const searchTimeoutRef = useRef<number | null>(null);
 
   const performSearch = useCallback(async (query: string) => {
@@ -58,10 +79,10 @@ export default function App() {
       }
 
       const data = await response.json();
-      
+
       // Transform backend response (array of paths) to FileItem format
-      const results: FileItem[] = (data.results || []).map((path: string, index: number) =>
-        pathToFileItem(path, index)
+      const results: FileItem[] = (data.results || []).map(
+        (path: string, index: number) => pathToFileItem(path, index)
       );
 
       if (results.length === 0) {
@@ -70,7 +91,10 @@ export default function App() {
 
       setSearchResults(results);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to search files. Make sure the backend server is running.';
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : 'Failed to search files. Make sure the backend server is running.';
       setError(errorMessage);
       setSearchResults([]);
     } finally {
@@ -134,7 +158,10 @@ export default function App() {
         setShowReindexSuccess(false);
       }, 3000);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to reindex files. Make sure the backend server is running.';
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : 'Failed to reindex files. Make sure the backend server is running.';
       setError(errorMessage);
       setIsReindexing(false);
     }
@@ -150,7 +177,9 @@ export default function App() {
     <div className="min-h-screen bg-black flex items-start justify-center px-6 py-16">
       <div className="w-full max-w-4xl">
         {/* Title */}
-        <h1 className="text-white text-center mb-12 text-5xl md:text-6xl font-bold tracking-tight">File Explorer</h1>
+        <h1 className="text-white text-center mb-12 text-5xl md:text-6xl font-bold tracking-tight">
+          File Explorer
+        </h1>
 
         {/* Search Bar */}
         <div className="mb-8">
@@ -201,7 +230,8 @@ export default function App() {
         {searchResults.length > 0 && !isSearching && (
           <div className="space-y-3">
             <p className="text-white/60 mb-4">
-              Found {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
+              Found {searchResults.length} result
+              {searchResults.length !== 1 ? 's' : ''}
             </p>
             {searchResults.map((file) => (
               <div
@@ -218,7 +248,9 @@ export default function App() {
                     <h3 className="text-white group-hover:text-white/90 transition-colors mb-1">
                       {file.name}
                     </h3>
-                    <p className="text-white/40 text-sm truncate">{file.path}</p>
+                    <p className="text-white/40 text-sm truncate">
+                      {file.path}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -239,4 +271,3 @@ export default function App() {
     </div>
   );
 }
-
