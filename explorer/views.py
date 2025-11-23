@@ -50,6 +50,10 @@ def api_search(request):
     q = request.GET.get("q", "").strip()
     directory = request.GET.get("dir", "documents1").strip() 
 
+    # GET /api/search?q=your query&dir=documents1
+    # GET /api/search?q=your query&dir=documents2, can do this to search in different directories 
+    # idk how to do this in frontend
+
     # this pagination stuff isnt implemented in frontend
 
     if not q:  
