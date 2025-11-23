@@ -14,3 +14,4 @@ want to search in.
 ## Victor:
 - Progress bar (both a backend and frontend thing)
 - Back burner: index webpages
+- Make sure there's a threshold for indexing, don't want giant files to return for everything
