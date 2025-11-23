@@ -19,6 +19,7 @@ type ReindexStatus =
   | { type: 'error'; message: string }
   | { type: 'success'; files: number };
 
+// https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions
 type SearchStatus =
   | { type: 'idle' }
   | { type: 'loading'; since: Date }
@@ -51,6 +52,12 @@ export default function App() {
   });
 
   const searchTimeoutRef = useRef<number | null>(null);
+
+  // Example: discriminated union
+  // if (searchStatus.type === 'error') {
+  //   type A = typeof searchStatus;
+  //        ^? { type: 'error'; message: string }
+  // }
 
   const performSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
@@ -212,9 +219,9 @@ export default function App() {
         </div>
 
         {/* Error Message */}
-        {error && (
+        {searchStatus.type === 'error' && (
           <div className="mb-8 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-            <p className="text-red-400 text-center">{error}</p>
+            <p className="text-red-400 text-center">{searchStatus.message}</p>
           </div>
         )}
 
