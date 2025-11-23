@@ -50,23 +50,15 @@ export default function App() {
     type: 'idle',
   });
 
-  setSearchStatus({
-    type: 'success',
-    results: [],
-  });
-
   const searchTimeoutRef = useRef<number | null>(null);
 
   const performSearch = useCallback(async (query: string) => {
-    setError(null);
-
     if (!query.trim()) {
-      setSearchResults([]);
-      setIsSearching(false);
+      setSearchStatus({ type: 'success', results: [] });
       return;
     }
 
-    setIsSearching(true);
+    setSearchStatus({ type: 'loading', since: new Date() });
 
     try {
       const response = await fetch(
