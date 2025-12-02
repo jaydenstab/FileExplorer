@@ -5,7 +5,8 @@ and storing them in ChromaDB for semantic search.
 from pathlib import Path
 import chromadb
 import fitz  # PyMuPDF
-from typing import List
+import time  # Added: for time.sleep() to add artificial delay (slow mode for testing)
+from typing import List, Optional, Callable  # Added: Optional and Callable for progress callback
 from functools import lru_cache
 from sentence_transformers import SentenceTransformer
 
@@ -17,7 +18,8 @@ MAX_FILES = 200  # Safety limit to prevent accidentally indexing too many files
 CHUNK_SIZE = 1000  # Characters per chunk
 CHUNK_OVERLAP = 200  # Overlap between chunks to preserve context
 SUPPORTED_EXTS = {".pdf", ".txt"}
-
+# want to chunk because it's easier to search for chunks than the entire file
+# overlap to preserve context at boundaries
 
 @lru_cache(maxsize=1)
 def _get_model() -> SentenceTransformer:
@@ -86,13 +88,19 @@ def _relative_path(p: Path) -> str:
     return str(p.resolve().relative_to(BASE_DIR.resolve()))
 
 
-def index_documents(directory: str = "documents1") -> int:
+def index_documents(
+    directory: str = "documents1",
+    progress_callback: Optional[Callable[[int, int, Optional[str], str], None]] = None,
+    slow_ms: int = 0
+) -> int:
     """
     Main indexing function: scans documents folder, extracts text, chunks it,
     creates embeddings, and stores everything in ChromaDB.
     
     Args:
         directory: Name of the directory to index (relative to project root, e.g., "documents1", "documents2")
+        progress_callback: Optional callback(current, total, current_file, phase) called during indexing
+        slow_ms: Optional artificial delay in milliseconds per file (for testing progress bar)
     
     Returns:
         The number of chunks indexed.
@@ -116,6 +124,13 @@ def index_documents(directory: str = "documents1") -> int:
 
     # Find all files to index
     files = _list_files(documents_dir)
+    total_files = len(files)  # Track total for progress percentage calculation
+    
+    # Report initial progress (0% - just starting)
+    # progress_callback(current, total, current_file, phase)
+    if progress_callback:
+        progress_callback(0, total_files, None, "starting")
+    
     model = _get_model()
 
     # Prepare data for ChromaDB
@@ -124,13 +139,24 @@ def index_documents(directory: str = "documents1") -> int:
     metas: List[dict] = []  # Metadata (file path, chunk number)
 
     # Process each file
-    for f in files:
+    # enumerate(files, start=1) gives us: (1, file1), (2, file2), etc.
+    for file_idx, f in enumerate(files, start=1):
+        # Report progress: "Currently processing file X out of Y"
+        rel = _relative_path(f)  # e.g., "documents1/file.pdf"
+        if progress_callback:
+            # Call the callback: current=file_idx (e.g., 3), total=total_files (e.g., 12)
+            # This updates the progress store so frontend can poll and see 25% complete
+            progress_callback(file_idx, total_files, rel, "reading")
+        
+        # ARTIFICIAL DELAY: For testing the progress bar visually
+        # If slow_ms=250, wait 0.25 seconds per file so you can see the bar move
+        # In production, this would be 0 (no delay)
+        if slow_ms > 0:
+            time.sleep(slow_ms / 1000.0)  # Convert milliseconds to seconds
+        
         text = _extract_text(str(f))
         if not text.strip():
             continue
-        
-        # Get relative path for the response
-        rel = _relative_path(f)
         
         # Split file into chunks and add each chunk to the database
         for i, chunk in enumerate(_chunk_text(text)):
@@ -139,13 +165,26 @@ def index_documents(directory: str = "documents1") -> int:
             metas.append({"path": rel, "chunk": i})
 
     if not docs:
+        if progress_callback:
+            progress_callback(total_files, total_files, None, "completed")
         return 0
 
     # Create embeddings for all chunks at once (more efficient)
+    # Report phase change: we're now embedding, not reading files
+    if progress_callback:
+        progress_callback(total_files, total_files, None, "embedding")
     embeddings = model.encode(docs).tolist()
     
     # Store everything in ChromaDB
+    # Report phase change: we're now storing in database
+    if progress_callback:
+        progress_callback(total_files, total_files, None, "storing")
     collection.add(documents=docs, embeddings=embeddings, metadatas=metas, ids=ids)
+    
+    # Final progress update: 100% complete
+    if progress_callback:
+        progress_callback(total_files, total_files, None, "completed")
+    
     return len(ids)
 
 

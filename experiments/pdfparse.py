@@ -8,6 +8,6 @@ def get_text_from_odf(path):
     return text
 
 if __name__ == "__main__":
-    pdf_path = "hw5.pdf" #why the heck does hw5.pdf being in experiments not work but it being in aifileexplorer does 
+    pdf_path = "" #change this to correct path
     content = get_text_from_odf(pdf_path)
     print(content[:500])
