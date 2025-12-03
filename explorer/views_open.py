@@ -62,14 +62,15 @@ def _read_pdf_preview(path: Path) -> dict:
     try:
         text = ""
         with fitz.open(str(path)) as pdf:
+            total_pages = len(pdf)
             # Limit to first 10 pages for preview
-            for page_num in range(min(10, len(pdf))):
+            for page_num in range(min(10, total_pages)):
                 text += pdf[page_num].get_text()
         return {
             "type": "pdf",
             "content": text,
-            "pages": len(pdf),
-            "preview_pages": min(10, len(pdf)),
+            "pages": total_pages,
+            "preview_pages": min(10, total_pages),
         }
     except Exception as e:
         return {"error": f"Failed to read PDF: {str(e)}"}

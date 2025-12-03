@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { SearchBar } from './components/SearchBar';
 import { RotateCw, Folder, FileText, CheckCircle2, ChevronLeft, ChevronRight, X, ExternalLink } from 'lucide-react';
 import { Theme } from './components/ui/theme';
-import { searchFiles, reindexDirectory, openFile, type SearchResponse, type PreviewData } from './lib/api';
+import { searchFiles, openFile, startReindex, getReindexStatus, type SearchResponse, type PreviewData, type ReindexStatusResponse } from './lib/api';
 
 interface FileItem {
   id: string;
@@ -99,10 +99,13 @@ export default function App() {
   const [pageSize] = useState(DEFAULT_PAGE_SIZE);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
   
   const queryClient = useQueryClient();
   const debounceTimeoutRef = useRef<number | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
+  const errorTimeoutRef = useRef<number | null>(null);
 
   // Stable query key for directories (sorted to ensure consistent key)
   const directoriesKey = useMemo(() => {
@@ -133,11 +136,14 @@ export default function App() {
     };
   }, [searchQuery]);
 
-  // Cleanup success timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (successTimeoutRef.current) {
         window.clearTimeout(successTimeoutRef.current);
+      }
+      if (errorTimeoutRef.current) {
+        window.clearTimeout(errorTimeoutRef.current);
       }
     };
   }, []);
@@ -162,10 +168,31 @@ export default function App() {
     }),
   });
 
-  // Reindex mutation
-  const reindexMutation = useMutation({
-    mutationFn: (directory: string) => reindexDirectory(directory),
-    onSuccess: () => {
+  // Start reindex mutation
+  const startReindexMutation = useMutation({
+    mutationFn: (directory: string) => startReindex(directory),
+    onSuccess: (data) => {
+      setJobId(data.job_id);
+    },
+  });
+
+  // Poll reindex status
+  const { data: reindexStatus, error: reindexStatusError } = useQuery<ReindexStatusResponse>({
+    queryKey: ['reindex-status', jobId],
+    queryFn: () => getReindexStatus(jobId!),
+    enabled: !!jobId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.status === 'indexing' ? 500 : false;
+    },
+  });
+
+  // Handle status transitions
+  useEffect(() => {
+    if (!reindexStatus) return;
+
+    if (reindexStatus.status === 'completed') {
+      // Show success message
       if (successTimeoutRef.current) {
         window.clearTimeout(successTimeoutRef.current);
       }
@@ -173,10 +200,22 @@ export default function App() {
       successTimeoutRef.current = window.setTimeout(() => {
         setShowSuccess(false);
       }, 3000);
+      
       // Invalidate search queries to refetch after reindexing
       queryClient.invalidateQueries({ queryKey: ['search'] });
-    },
-  });
+      
+      // Clear jobId after delay to hide progress bar
+      setTimeout(() => {
+        setJobId(null);
+      }, 3000);
+    } else if (reindexStatus.status === 'error') {
+      // Error is handled in error state below
+      // Stop polling by clearing jobId
+      setTimeout(() => {
+        setJobId(null);
+      }, 5000);
+    }
+  }, [reindexStatus, queryClient]);
 
   // Prefetch preview on hover
   const prefetchPreview = useCallback((path: string) => {
@@ -240,9 +279,27 @@ export default function App() {
   }, []);
 
   const handleReindex = useCallback(() => {
-    const dirToIndex = selectedDirectories[0] || AVAILABLE_DIRECTORIES[0];
-    reindexMutation.mutate(dirToIndex);
-  }, [selectedDirectories, reindexMutation]);
+    // Early return if already indexing
+    if (startReindexMutation.isPending || reindexStatus?.status === 'indexing') {
+      return;
+    }
+
+    // Check if no directories are selected
+    if (selectedDirectories.length === 0) {
+      if (errorTimeoutRef.current) {
+        window.clearTimeout(errorTimeoutRef.current);
+      }
+      setLocalError('Please select at least one directory to index.');
+      errorTimeoutRef.current = window.setTimeout(() => {
+        setLocalError(null);
+      }, 4000);
+      return;
+    }
+
+    const dirToIndex = selectedDirectories[0];
+    setJobId(null); // Reset progress
+    startReindexMutation.mutate(dirToIndex);
+  }, [selectedDirectories, startReindexMutation, reindexStatus]);
 
 
   const handleDirectoryToggle = useCallback((directory: string) => {
@@ -251,11 +308,8 @@ export default function App() {
       let newSelection: string[];
       
       if (isSelected) {
-        // Remove directory, but ensure at least one remains
+        // Allow removing the last selected directory (zero selection allowed)
         newSelection = prev.filter(d => d !== directory);
-        if (newSelection.length === 0) {
-          newSelection = [AVAILABLE_DIRECTORIES.find(d => d !== directory) || AVAILABLE_DIRECTORIES[0]];
-        }
       } else {
         // Add directory
         newSelection = [...prev, directory];
@@ -299,6 +353,9 @@ export default function App() {
   }, [currentPage, hasNext]);
 
   const getDirectoriesText = useCallback(() => {
+    if (selectedDirectories.length === 0) {
+      return 'no directories';
+    }
     if (selectedDirectories.length === 1) {
       return selectedDirectories[0];
     }
@@ -306,13 +363,18 @@ export default function App() {
   }, [selectedDirectories]);
 
   // Determine error message
-  const errorMessage = searchError instanceof Error 
-    ? searchError.message 
-    : openFileMutation.error instanceof Error
-    ? openFileMutation.error.message
-    : reindexMutation.error instanceof Error
-    ? reindexMutation.error.message
-    : null;
+  const errorMessage = localError
+    || (searchError instanceof Error 
+      ? searchError.message 
+      : openFileMutation.error instanceof Error
+      ? openFileMutation.error.message
+      : startReindexMutation.error instanceof Error
+      ? startReindexMutation.error.message
+      : reindexStatusError instanceof Error
+      ? reindexStatusError.message
+      : reindexStatus?.status === 'error' && reindexStatus.error
+      ? reindexStatus.error
+      : null);
 
   // Show "no results" error if search completed but no results
   const showNoResultsError = !isSearching && debouncedQuery.trim() && searchResults.length === 0 && !searchError;
@@ -399,22 +461,61 @@ export default function App() {
             <div className="flex items-center justify-center gap-4 mb-8">
               <button
                 onClick={handleReindex}
-                disabled={reindexMutation.isPending}
+                disabled={startReindexMutation.isPending || reindexStatus?.status === 'indexing'}
                 className="flex items-center gap-2 px-6 py-3 bg-[var(--color-card)] hover:bg-[var(--color-primary)]/20 disabled:bg-[var(--color-muted)] disabled:cursor-not-allowed text-[var(--color-foreground)] rounded-lg transition-all duration-200 border border-[var(--color-border)] hover:border-[var(--color-primary)]"
               >
                 <RotateCw
-                  className={`w-4 h-4 ${reindexMutation.isPending ? 'animate-spin' : ''}`}
+                  className={`w-4 h-4 ${(startReindexMutation.isPending || reindexStatus?.status === 'indexing') ? 'animate-spin' : ''}`}
                 />
-                {reindexMutation.isPending ? 'Reindexing...' : 'Reindex Files'}
+                {(startReindexMutation.isPending || reindexStatus?.status === 'indexing') ? 'Reindexing...' : 'Reindex Files'}
               </button>
 
               {showSuccess && (
                 <div className="flex items-center gap-2 text-[var(--color-success)] animate-in fade-in slide-in-from-left-2 duration-300">
                   <CheckCircle2 className="w-5 h-5" />
-                  <span>Operation completed successfully!</span>
+                  <span> Completed!</span>
                 </div>
               )}
             </div>
+
+            {/* Progress Bar */}
+            {reindexStatus && reindexStatus.status === 'indexing' && (
+              <div className="mb-8 max-w-2xl mx-auto">
+                <div className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-[var(--color-foreground)]">
+                      Indexing {reindexStatus.directory}
+                    </span>
+                    <span className="text-sm text-[var(--color-foreground)]/60">
+                      {reindexStatus.percent.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-[var(--color-muted)] rounded-full h-2 mb-2">
+                    <div
+                      className="bg-[var(--color-primary)] h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${reindexStatus.percent}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-[var(--color-foreground)]/60">
+                    <span>
+                      {reindexStatus.current_file && (
+                        <span className="truncate max-w-md inline-block">
+                          {reindexStatus.current_file.split('/').pop()}
+                        </span>
+                      )}
+                    </span>
+                    <span>
+                      {reindexStatus.current} / {reindexStatus.total} files
+                    </span>
+                  </div>
+                  {reindexStatus.phase && (
+                    <div className="text-xs text-[var(--color-foreground)]/40 mt-1">
+                      Phase: {reindexStatus.phase}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Error Message */}
             {errorMessage && (

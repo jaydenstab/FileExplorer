@@ -1,5 +1,25 @@
 // Backend API base URL - from environment variable
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const rawBase = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_URL = (rawBase ?? '/api').replace(/\/+$/, '');
+
+// Safe JSON parsing helpers
+const parseJsonSafe = async (response: Response) => {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
+
+const errorFromResponse = async (response: Response, fallback: string) => {
+  const body = await parseJsonSafe(response);
+  const message =
+    typeof body === 'string'
+      ? body || `${fallback} (${response.status})`
+      : body?.error || `${fallback} (${response.status})`;
+  throw new Error(message);
+};
 
 export interface SearchResponse {
   query: string;
@@ -23,6 +43,23 @@ export interface PreviewData {
 export interface ReindexResponse {
   indexed_chunks: number;
   directory: string;
+}
+
+export interface ReindexStartResponse {
+  job_id: string;
+}
+
+export interface ReindexStatusResponse {
+  job_id: string;
+  status: 'indexing' | 'completed' | 'error';
+  directory: string;
+  current: number;
+  total: number;
+  percent: number;
+  current_file?: string;
+  phase?: 'reading' | 'embedding' | 'storing' | 'completed';
+  updated_at: string;
+  error?: string;
 }
 
 /**
@@ -51,8 +88,7 @@ export const searchFiles = async (
   const response = await fetch(`${API_BASE_URL}/search?${params.toString()}`, { signal });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Search failed');
+    await errorFromResponse(response, 'Search failed');
   }
 
   return response.json();
@@ -66,8 +102,48 @@ export const reindexDirectory = async (directory: string): Promise<ReindexRespon
   const response = await fetch(`${API_BASE_URL}/reindex?dir=${encodeURIComponent(directory)}`);
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Reindexing failed');
+    await errorFromResponse(response, 'Reindexing failed');
+  }
+
+  return response.json();
+};
+
+/**
+ * Start an indexing job in the background.
+ * @param directory - Directory name to index
+ * @param slowMs - Optional artificial delay in milliseconds per file (for testing)
+ */
+export const startReindex = async (
+  directory: string,
+  slowMs: number = 0
+): Promise<ReindexStartResponse> => {
+  const params = new URLSearchParams({
+    dir: directory,
+    ...(slowMs > 0 && { slow_ms: slowMs.toString() }),
+  });
+
+  const response = await fetch(`${API_BASE_URL}/reindex/start?${params.toString()}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    await errorFromResponse(response, 'Failed to start reindexing');
+  }
+
+  return response.json();
+};
+
+/**
+ * Get the current progress of an indexing job.
+ * @param jobId - Job identifier returned from startReindex
+ */
+export const getReindexStatus = async (jobId: string): Promise<ReindexStatusResponse> => {
+  const response = await fetch(
+    `${API_BASE_URL}/reindex/status?job_id=${encodeURIComponent(jobId)}`
+  );
+
+  if (!response.ok) {
+    await errorFromResponse(response, 'Failed to get reindex status');
   }
 
   return response.json();
@@ -90,8 +166,7 @@ export const openFile = async (
   );
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Failed to open file');
+    await errorFromResponse(response, 'Failed to open file');
   }
 
   return response.json();
