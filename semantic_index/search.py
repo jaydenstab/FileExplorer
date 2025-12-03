@@ -68,7 +68,7 @@ def aggregate_best_distance(metadatas: List[dict], distances: List[float]) -> Li
 def search_files(
     query: str,
     k: int = 5,
-    directory: str = "documents1",
+    directory: str | List[str] = "documents1",
     include_distances: bool = False
 ) -> List:
     """
@@ -78,6 +78,7 @@ def search_files(
         query: Search query string (e.g., "rhetoric", "neural networks")
         k: Number of results to return (default: 5)
         directory: Name of the directory to search in (e.g., "documents1", "documents2")
+                   OR a list of directory names to search across multiple directories
         include_distances: If True, return list of dicts with 'path' and 'distance'. 
                           If False, return list of paths (backward compatible)
     
@@ -85,40 +86,55 @@ def search_files(
         If include_distances=False: List of file paths (relative to project root)
         If include_distances=True: List of dicts with 'path' and 'distance', sorted by distance
         Duplicates are removed. Lower distance = better match.
+        When multiple directories are searched, results are merged and sorted by distance.
     """
-    # Connect to ChromaDB
-    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    collection_name = f"files_{directory}"
-    
-    # Check if collection exists, return empty list if it doesn't
-    try:
-        collection = client.get_collection(name=collection_name)
-    except Exception:
-        return []
+    # Normalize directory to a list
+    directories = directory if isinstance(directory, list) else [directory]
     
     if not query or k <= 0:
         return []
     
-    # Convert query to embedding vector
-    # "neural networks" → [0.23, -0.45, 0.67, ...] (384 numbers)
+    # Connect to ChromaDB
+    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    
+    # Convert query to embedding vector (do this once, reuse for all directories)
     model = get_model()
     q_emb = model.encode([query]).tolist()
     
-    # Query the vector database for similar chunks
-    # include=["metadatas", "distances"] tells ChromaDB to return distance scores
-    # Distance = how different the chunk is from query (lower = more similar)
-    res = collection.query(query_embeddings=q_emb, n_results=k, include=["metadatas", "distances"])
+    # Collect results from all directories
+    all_metas = []
+    all_distances = []
     
-    # Extract metadata (file paths) and distances from ChromaDB response
-    metas = (res.get("metadatas") or [[]])[0]  # List of dicts with "path" key
-    distances = (res.get("distances") or [[]])[0]  # List of floats (e.g., [0.2, 0.5, 0.8])
+    for dir_name in directories:
+        collection_name = f"files_{dir_name}"
+        
+        # Check if collection exists, skip if it doesn't
+        try:
+            collection = client.get_collection(name=collection_name)
+        except Exception:
+            continue
+        
+        # Query the vector database for similar chunks
+        # We fetch k results per directory, then merge and sort
+        res = collection.query(query_embeddings=q_emb, n_results=k, include=["metadatas", "distances"])
+        
+        # Extract metadata and distances
+        metas = (res.get("metadatas") or [[]])[0]
+        distances = (res.get("distances") or [[]])[0]
+        
+        if metas and distances:
+            all_metas.extend(metas)
+            all_distances.extend(distances)
     
-    if not metas or not distances:
+    if not all_metas or not all_distances:
         return []
     
     # Aggregate: convert chunk-level results to file-level results
     # Multiple chunks from same file → one entry with best (lowest) distance
-    aggregated = aggregate_best_distance(metas, distances)
+    aggregated = aggregate_best_distance(all_metas, all_distances)
+    
+    # Limit to k results (already sorted by distance, best matches first)
+    aggregated = aggregated[:k]
     
     if include_distances:
         # Return list of dicts: [{"path": "file.pdf", "distance": 0.2}, ...]

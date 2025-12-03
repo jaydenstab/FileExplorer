@@ -115,12 +115,27 @@ def index_documents(
     # Use directory name in collection name to keep different directories separate
     collection_name = f"files_{directory}"
     
-    # Delete existing collection to rebuild from scratch (avoids stale data)
+    # Delete existing collection to rebuild from scratch (removes all old files)
+    # This ensures only files currently in the directory are indexed
     try:
         client.delete_collection(collection_name)
     except Exception:
+        # Collection doesn't exist yet, which is fine
         pass
+    
+    # Create a fresh collection (empty, ready for new data)
     collection = client.get_or_create_collection(name=collection_name)
+    
+    # Clear any existing data in the collection (in case deletion didn't work)
+    # This is a safety measure to ensure we start with a clean slate
+    try:
+        # Get all existing IDs and delete them
+        existing_data = collection.get()
+        if existing_data and existing_data.get("ids"):
+            collection.delete(ids=existing_data["ids"])
+    except Exception:
+        # Collection is empty or doesn't have data, which is fine
+        pass
 
     # Find all files to index
     files = _list_files(documents_dir)

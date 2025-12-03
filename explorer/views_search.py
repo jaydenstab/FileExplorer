@@ -16,7 +16,9 @@ def api_search(request):
     - k (optional): Number of results to return (default: 5, max: 50) - used when pagination not specified
     - page (optional): Page number for pagination (default: 1)
     - page_size (optional): Number of results per page (default: 5, max: 50)
-    - dir (optional): Directory name to search in (default: "documents1")
+    - dir (optional): Directory name to search in (default: "documents1"). Use for single directory.
+    - dirs (optional): Comma-separated list of directories to search (e.g., "documents1,documents2").
+                      If provided, overrides 'dir' parameter. Allows searching multiple directories.
     - include_scores (optional): If "true", return results with distance scores (default: false)
     - distance_threshold (optional): Filter results by maximum distance (lower = better match, default: no filter)
     
@@ -25,19 +27,22 @@ def api_search(request):
     If include_scores=true, results are dicts with 'path' and 'distance'.
     """
     q = request.GET.get("q", "").strip()
-    directory = request.GET.get("dir", "documents1").strip() 
-
-    # GET /api/search?q=your query&dir=documents1
-    # GET /api/search?q=your query&dir=documents2, can do this to search in different directories 
-    # idk how to do this in frontend
-
-    # this pagination stuff isnt implemented in frontend
+    
+    # Support both single directory (dir) and multiple directories (dirs)
+    dirs_param = request.GET.get("dirs", "").strip()
+    if dirs_param:
+        # Multiple directories: split by comma and clean up
+        directories = [d.strip() for d in dirs_param.split(",") if d.strip()]
+    else:
+        # Single directory: use dir parameter with default
+        dir_param = request.GET.get("dir", "documents1").strip()
+        directories = [dir_param] if dir_param else ["documents1"]
 
     if not q:  
         return JsonResponse({"error": "missing 'q' parameter"}, status=400)
     
-    if not directory:
-        return JsonResponse({"error": "directory name cannot be empty"}, status=400)
+    if not directories or not all(directories):
+        return JsonResponse({"error": "at least one directory must be specified"}, status=400)
     
     # PARSE DISTANCE FILTERING PARAMETERS
     # include_scores: If true, return results with distance scores (e.g., {"path": "...", "distance": 0.2})
@@ -78,7 +83,7 @@ def api_search(request):
         # If user wants scores OR wants to filter by threshold, we need distances
         # (can't filter without knowing distances, even if we don't return them)
         need_distances = include_scores or (distance_threshold is not None)
-        all_results = search_files(q, k=k, directory=directory, include_distances=need_distances)
+        all_results = search_files(q, k=k, directory=directories, include_distances=need_distances)
         
         # Apply distance threshold filter if specified
         # Example: threshold=0.3 means "only show results with distance <= 0.3"
@@ -105,7 +110,7 @@ def api_search(request):
         
         return JsonResponse({
             "query": q,
-            "directory": directory,
+            "directories": directories,
             "page": page,
             "page_size": page_size,
             "has_next": has_next,
@@ -124,7 +129,7 @@ def api_search(request):
         # DISTANCE FILTERING LOGIC (same as pagination mode above)
         # Get distances if user wants scores OR wants to filter by threshold
         need_distances = include_scores or (distance_threshold is not None)
-        results = search_files(q, k=k, directory=directory, include_distances=need_distances)
+        results = search_files(q, k=k, directory=directories, include_distances=need_distances)
         
         # Apply distance threshold filter if specified
         if distance_threshold is not None:
@@ -139,5 +144,5 @@ def api_search(request):
             # No threshold, convert dicts to paths for backward compatibility
             results = [r["path"] if isinstance(r, dict) else r for r in results]
         
-        return JsonResponse({"query": q, "directory": directory, "results": results})
+        return JsonResponse({"query": q, "directories": directories, "results": results})
 
