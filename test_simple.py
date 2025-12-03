@@ -34,7 +34,7 @@ while True:
         print(f"✗ Error: {status.get('error')}\n")
         break
     
-    #time.sleep(0.3) # Sleepy time 
+    time.sleep(0.3) # Sleepy time 
 
 print("TEST 2: Distance Threshold - Filter out irrelevant results")
 
