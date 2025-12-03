@@ -1,17 +1,17 @@
 ## Jayden:
-- Implement "folder filters" feature where users can select which folders they
-want to search in.
-- For opening files, I would go with this approach:
-    1. Frontend detects the click event
-    2. Frontend sends a request to the backend with the file path
-    3. Backend either:
-        - Reads the file and sends it back to the frontend to display
-        - Open it with the OS' default application to open it:
-            https://stackoverflow.com/questions/434597/open-document-with-default-os-application-in-python-both-in-windows-and-mac-os
 - Pagination on the frontend
+- Make UI to open files less intrusive: have the file preview on the side
+  instead of a dialog box
+- Progress bar and in general, better feedback for the user as to what the
+  backend is doing. e.g. a status bar at the bottom-left that shows what the 
+  backend is working on.
+- Adjustable thresholds??????????
 - Back burner: Make UI more file-explorer-like?
 
 ## Victor:
+- Investigate reranking / other methods of determining document relevance. Mess
+  with metrics for chunk matching?
 - Progress bar (both a backend and frontend thing)
-- Back burner: index webpages
+- Back burner: index webpages and images? --> add a mechanism to the backend
+  that lets people filter down on what types of files are in their index
 - Make sure there's a threshold for indexing, don't want giant files to return for everything
