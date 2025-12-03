@@ -6,3 +6,6 @@ db.sqlite3
 *.log
 .chroma
 *.sqlite
+
+# Frontend build output
+frontend/dist/

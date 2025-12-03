@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { SearchBar } from './components/SearchBar';
 import { RotateCw, Folder, FileText, CheckCircle2, ChevronLeft, ChevronRight, X, ExternalLink } from 'lucide-react';
 import { Theme } from './components/ui/theme';
+import { searchFiles, reindexDirectory, openFile, type SearchResponse, type PreviewData } from './lib/api';
 
 interface FileItem {
   id: string;
@@ -11,32 +12,13 @@ interface FileItem {
   type: 'file' | 'folder';
 }
 
-interface PreviewData {
-  type: 'text' | 'pdf';
-  content: string;
-  name: string;
-  path: string;
-  size?: number;
-  pages?: number;
-  preview_pages?: number;
-}
-
-interface SearchResponse {
-  query: string;
-  directories: string[];
+interface SearchView {
+  items: FileItem[];
+  hasNext: boolean;
   page: number;
-  page_size: number;
-  has_next: boolean;
-  results: string[];
+  pageSize: number;
 }
 
-interface ReindexResponse {
-  indexed_chunks: number;
-  directory: string;
-}
-
-// Backend API base URL - from environment variable with fallback
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
 const SEARCH_DEBOUNCE_MS = 600;
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -57,49 +39,57 @@ const pathToFileItem = (path: string, index: number): FileItem => {
   };
 };
 
-// API functions
-const searchFiles = async (query: string, directories: string[], page: number, pageSize: number): Promise<SearchResponse> => {
-  const dirsParam = directories.join(',');
-  const params = new URLSearchParams({
-    q: query,
-    dirs: dirsParam,
-    page: page.toString(),
-    page_size: pageSize.toString(),
-  });
-  
-  const response = await fetch(`${API_BASE_URL}/search?${params.toString()}`);
-  
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Search failed');
-  }
-  
-  return response.json();
-};
+// Memoized ResultRow component to prevent unnecessary re-renders
+interface ResultRowProps {
+  file: FileItem;
+  onPreviewClick: () => void;
+  onOpenClick: () => void;
+  onMouseEnter: () => void;
+}
 
-const reindexDirectory = async (directory: string): Promise<ReindexResponse> => {
-  const response = await fetch(`${API_BASE_URL}/reindex?dir=${encodeURIComponent(directory)}`);
-  
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Reindexing failed');
-  }
-  
-  return response.json();
-};
-
-const openFile = async (path: string, mode: 'preview' | 'open_os'): Promise<PreviewData | { success: boolean; message: string; path: string }> => {
-  const response = await fetch(
-    `${API_BASE_URL}/open?path=${encodeURIComponent(path)}&mode=${mode}`
+const ResultRow = memo(({ file, onPreviewClick, onOpenClick, onMouseEnter }: ResultRowProps) => {
+  return (
+    <div
+      onMouseEnter={onMouseEnter}
+      onClick={onPreviewClick}
+      className="group bg-[var(--color-card)] hover:bg-[var(--color-muted)] border border-[var(--color-border)] hover:border-[var(--color-primary)] rounded-lg p-4 transition-all duration-200 cursor-pointer"
+    >
+      <div className="flex items-start gap-3">
+        {file.type === 'folder' ? (
+          <Folder className="w-5 h-5 text-[var(--color-primary)] flex-shrink-0 mt-0.5" />
+        ) : (
+          <FileText className="w-5 h-5 text-[var(--color-foreground)]/70 flex-shrink-0 mt-0.5" />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-[var(--color-foreground)] group-hover:text-[var(--color-primary)] transition-colors mb-1 font-medium">
+                {file.name}
+              </h3>
+              <p className="text-[var(--color-foreground)]/40 text-sm truncate font-mono">
+                {file.path}
+              </p>
+            </div>
+            {file.type === 'file' && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenClick();
+                }}
+                className="open-os-button opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 text-xs text-[var(--color-foreground)]/60 hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded"
+                title="Open with system application"
+              >
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
-  
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'Failed to open file');
-  }
-  
-  return response.json();
-};
+});
+
+ResultRow.displayName = 'ResultRow';
 
 export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -152,16 +142,24 @@ export default function App() {
     };
   }, []);
 
-  // Search query
+  // Search query with cancellable requests and keepPreviousData
   const {
-    data: searchData,
-    isLoading: isSearching,
+    data: searchView,
+    isFetching: isSearching,
     error: searchError,
-  } = useQuery<SearchResponse>({
+  } = useQuery<SearchResponse, Error, SearchView>({
     queryKey: ['search', debouncedQuery, directoriesKey, currentPage, pageSize],
-    queryFn: () => searchFiles(debouncedQuery, selectedDirectories, currentPage, pageSize),
+    queryFn: ({ signal }) => searchFiles(debouncedQuery, selectedDirectories, currentPage, pageSize, signal),
     enabled: !!debouncedQuery.trim(),
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    placeholderData: keepPreviousData,
+    staleTime: 300_000, // 5 minutes
+    gcTime: 120_000, // 2 minutes: collect inactive search results sooner
+    select: (data) => ({
+      items: data.results.map((path: string, index: number) => pathToFileItem(path, index)),
+      hasNext: data.has_next,
+      page: data.page,
+      pageSize: data.page_size,
+    }),
   });
 
   // Reindex mutation
@@ -180,12 +178,23 @@ export default function App() {
     },
   });
 
+  // Prefetch preview on hover
+  const prefetchPreview = useCallback((path: string) => {
+    queryClient.prefetchQuery({
+      queryKey: ['preview', path],
+      queryFn: ({ signal }) => openFile(path, 'preview', signal) as Promise<PreviewData>,
+      staleTime: 30_000, // 30 seconds
+    });
+  }, [queryClient]);
+
   // Open file mutation
   const openFileMutation = useMutation({
     mutationFn: ({ path, mode }: { path: string; mode: 'preview' | 'open_os' }) => openFile(path, mode),
     onSuccess: (data, variables) => {
       if (variables.mode === 'preview') {
         setPreviewData(data as PreviewData);
+        // Cache the preview data
+        queryClient.setQueryData(['preview', variables.path], data);
       } else {
         if (successTimeoutRef.current) {
           window.clearTimeout(successTimeoutRef.current);
@@ -198,17 +207,25 @@ export default function App() {
     },
   });
 
-  // Memoize search results transformation
-  const searchResults: FileItem[] = useMemo(() => {
-    return searchData?.results?.map((path: string, index: number) =>
-      pathToFileItem(path, index)
-    ) || [];
-  }, [searchData?.results]);
-
-  const hasNext = searchData?.has_next || false;
+  // Use searchView data (already mapped via select)
+  const searchResults: FileItem[] = searchView?.items || [];
+  const hasNext = searchView?.hasNext || false;
+  
+  // Prefetch next page when available
+  useEffect(() => {
+    if (!debouncedQuery.trim() || !hasNext) return;
+    queryClient.prefetchQuery({
+      queryKey: ['search', debouncedQuery, directoriesKey, currentPage + 1, pageSize],
+      queryFn: ({ signal }) =>
+        searchFiles(debouncedQuery, selectedDirectories, currentPage + 1, pageSize, signal),
+      staleTime: 300_000,
+      gcTime: 120_000,
+    });
+  }, [debouncedQuery, directoriesKey, currentPage, pageSize, hasNext, selectedDirectories, queryClient]);
+  
   // More accurate total results calculation
   const totalResults = useMemo(() => {
-    if (!searchData) return 0;
+    if (!searchView) return 0;
     // If we have results and there's a next page, estimate total
     // Otherwise, just show current page results count
     if (hasNext) {
@@ -216,7 +233,7 @@ export default function App() {
       return currentPage * pageSize + (searchResults.length > 0 ? 1 : 0);
     }
     return (currentPage - 1) * pageSize + searchResults.length;
-  }, [searchData, hasNext, currentPage, pageSize, searchResults.length]);
+  }, [searchView, hasNext, currentPage, pageSize, searchResults.length]);
 
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
@@ -227,9 +244,6 @@ export default function App() {
     reindexMutation.mutate(dirToIndex);
   }, [selectedDirectories, reindexMutation]);
 
-  const getSuggestions = useCallback((_query: string): string[] => {
-    return [];
-  }, []);
 
   const handleDirectoryToggle = useCallback((directory: string) => {
     setSelectedDirectories(prev => {
@@ -259,8 +273,19 @@ export default function App() {
     }
     
     const path = file.path.slice(1); // Remove leading slash
+    
+    // For preview mode, check cache first
+    if (mode === 'preview') {
+      const cacheKey = ['preview', path] as const;
+      const cached = queryClient.getQueryData<PreviewData>(cacheKey);
+      if (cached) {
+        setPreviewData(cached);
+        return;
+      }
+    }
+    
     openFileMutation.mutate({ path, mode });
-  }, [openFileMutation]);
+  }, [openFileMutation, queryClient]);
 
   const closePreview = useCallback(() => {
     setPreviewData(null);
@@ -352,15 +377,21 @@ export default function App() {
               <SearchBar
                 value={searchQuery}
                 onChange={handleSearch}
-                suggestions={getSuggestions(searchQuery)}
                 placeholder="Search files and folders..."
               />
             </div>
 
-            {/* Loading Indicator */}
-            {isSearching && (
+            {/* Loading Indicator - only show when no previous data */}
+            {isSearching && searchResults.length === 0 && (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
+              </div>
+            )}
+            
+            {/* Subtle loading indicator when fetching with existing data */}
+            {isSearching && searchResults.length > 0 && (
+              <div className="flex items-center justify-center py-2 mb-4">
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
               </div>
             )}
 
@@ -402,7 +433,7 @@ export default function App() {
             )}
 
             {/* Results Section */}
-            {searchResults.length > 0 && !isSearching && (
+            {searchResults.length > 0 && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between mb-4">
                   <p className="text-[var(--color-foreground)]/60">
@@ -412,43 +443,17 @@ export default function App() {
                 
                 <div className="space-y-2">
                   {searchResults.map((file) => (
-                    <div
+                    <ResultRow
                       key={file.id}
-                      onClick={() => handleFileClick(file, 'preview')}
-                      className="group bg-[var(--color-card)] hover:bg-[var(--color-muted)] border border-[var(--color-border)] hover:border-[var(--color-primary)] rounded-lg p-4 transition-all duration-200 cursor-pointer"
-                    >
-                      <div className="flex items-start gap-3">
-                        {file.type === 'folder' ? (
-                          <Folder className="w-5 h-5 text-[var(--color-primary)] flex-shrink-0 mt-0.5" />
-                        ) : (
-                          <FileText className="w-5 h-5 text-[var(--color-foreground)]/70 flex-shrink-0 mt-0.5" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <h3 className="text-[var(--color-foreground)] group-hover:text-[var(--color-primary)] transition-colors mb-1 font-medium">
-                                {file.name}
-                              </h3>
-                              <p className="text-[var(--color-foreground)]/40 text-sm truncate font-mono">
-                                {file.path}
-                              </p>
-                            </div>
-                            {file.type === 'file' && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleFileClick(file, 'open_os');
-                                }}
-                                className="open-os-button opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 text-xs text-[var(--color-foreground)]/60 hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded"
-                                title="Open with system application"
-                              >
-                                <ExternalLink className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                      file={file}
+                      onPreviewClick={() => handleFileClick(file, 'preview')}
+                      onOpenClick={() => handleFileClick(file, 'open_os')}
+                      onMouseEnter={() => {
+                        if (file.type === 'file') {
+                          prefetchPreview(file.path.slice(1));
+                        }
+                      }}
+                    />
                   ))}
                 </div>
 
