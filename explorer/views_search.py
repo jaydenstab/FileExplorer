@@ -21,6 +21,7 @@ def api_search(request):
                       If provided, overrides 'dir' parameter. Allows searching multiple directories.
     - include_scores (optional): If "true", return results with distance scores (default: false)
     - distance_threshold (optional): Filter results by maximum distance (lower = better match, default: no filter)
+    - use_reranker (optional): If "true", use reranker to improve ranking (default: true). If "false", use distance-based ranking only.
     
     Returns JSON with the query and list of matching file paths.
     If pagination is used, also returns page, page_size, and has_next.
@@ -60,6 +61,9 @@ def api_search(request):
         except ValueError:
             pass  # Invalid number, ignore threshold
     
+    # use_reranker: If true, use reranker to improve ranking accuracy (default: true)
+    use_reranker = request.GET.get("use_reranker", "true").lower() == "true"
+    
     # Check if pagination parameters are provided
     page_str = request.GET.get("page")
     size_str = request.GET.get("page_size")
@@ -83,7 +87,7 @@ def api_search(request):
         # If user wants scores OR wants to filter by threshold, we need distances
         # (can't filter without knowing distances, even if we don't return them)
         need_distances = include_scores or (distance_threshold is not None)
-        all_results = search_files(q, k=k, directory=directories, include_distances=need_distances)
+        all_results = search_files(q, k=k, directory=directories, include_distances=need_distances, use_reranker=use_reranker)
         
         # Apply distance threshold filter if specified
         # Example: threshold=0.3 means "only show results with distance <= 0.3"
@@ -129,7 +133,7 @@ def api_search(request):
         # DISTANCE FILTERING LOGIC (same as pagination mode above)
         # Get distances if user wants scores OR wants to filter by threshold
         need_distances = include_scores or (distance_threshold is not None)
-        results = search_files(q, k=k, directory=directories, include_distances=need_distances)
+        results = search_files(q, k=k, directory=directories, include_distances=need_distances, use_reranker=use_reranker)
         
         # Apply distance threshold filter if specified
         if distance_threshold is not None:
