@@ -3,6 +3,7 @@ Semantic indexing module - handles reading files, chunking text, creating embedd
 and storing them in ChromaDB for semantic search.
 """
 from pathlib import Path
+import os
 import chromadb
 import fitz  # PyMuPDF
 import time  # Added: for time.sleep() to add artificial delay (slow mode for testing)
@@ -13,7 +14,12 @@ from sentence_transformers import SentenceTransformer
 # Configuration constants
 BASE_DIR = Path(__file__).resolve().parents[1]
 CHROMA_DIR = BASE_DIR / ".chroma"
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # sentence-transformers model for creating embeddings
+
+# Default sentence-transformers model for creating embeddings.
+# We use a stronger retrieval model than all-MiniLM to improve initial recall
+# before reranking. Can be overridden via the SEMANTIC_EMBEDDING_MODEL env var.
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL = os.getenv("SEMANTIC_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 MAX_FILES = 200  # Safety limit to prevent accidentally indexing too many files
 CHUNK_SIZE = 1000  # Characters per chunk
 CHUNK_OVERLAP = 200  # Overlap between chunks to preserve context
@@ -23,7 +29,12 @@ SUPPORTED_EXTS = {".pdf", ".txt"}
 
 @lru_cache(maxsize=1)
 def _get_model() -> SentenceTransformer:
-    """Load and cache the embedding model (only loads once, reused for all operations)."""
+    """
+    Load and cache the embedding model (only loads once, reused for all operations).
+    
+    The model name comes from the EMBEDDING_MODEL constant, which can be
+    overridden at runtime via the SEMANTIC_EMBEDDING_MODEL environment variable.
+    """
     return SentenceTransformer(EMBEDDING_MODEL)
 
 
@@ -188,7 +199,10 @@ def index_documents(
     # Report phase change: we're now embedding, not reading files
     if progress_callback:
         progress_callback(total_files, total_files, None, "embedding")
-    embeddings = model.encode(docs).tolist()
+    # For models like BGE, it is recommended to normalize embeddings for
+    # cosine-similarity-based retrieval. This generally makes distances
+    # more comparable and improves retrieval quality.
+    embeddings = model.encode(docs, normalize_embeddings=True).tolist()
     
     # Store everything in ChromaDB
     # Report phase change: we're now storing in database

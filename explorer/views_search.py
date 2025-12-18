@@ -63,6 +63,25 @@ def api_search(request):
     
     # use_reranker: If true, use reranker to improve ranking accuracy (default: true)
     use_reranker = request.GET.get("use_reranker", "true").lower() == "true"
+
+    # Helper to compute an overall confidence score/label from reranker scores.
+    # We look at the maximum rerank_score across all results (if present).
+    def _compute_confidence(result_items):
+        best_score = 0.0
+        if isinstance(result_items, list):
+            for r in result_items:
+                if isinstance(r, dict):
+                    s = float(r.get("rerank_score", 0.0) or 0.0)
+                    if s > best_score:
+                        best_score = s
+        # Map numeric score to coarse confidence level
+        if best_score >= 0.8:
+            level = "high"
+        elif best_score >= 0.3:
+            level = "medium"
+        else:
+            level = "low"
+        return best_score, level
     
     # Check if pagination parameters are provided
     page_str = request.GET.get("page")
@@ -83,11 +102,23 @@ def api_search(request):
         # Fetch one extra item to determine if there's a next page
         k = min(page * page_size + 1, 200)
         
-        # DISTANCE FILTERING LOGIC:
-        # If user wants scores OR wants to filter by threshold, we need distances
-        # (can't filter without knowing distances, even if we don't return them)
-        need_distances = include_scores or (distance_threshold is not None)
-        all_results = search_files(q, k=k, directory=directories, include_distances=need_distances, use_reranker=use_reranker)
+        # DISTANCE / SCORE FETCHING LOGIC:
+        # If user wants scores, wants to filter by threshold, OR wants reranker-based
+        # confidence, we need full result dicts (with distances and rerank_score).
+        need_distances = include_scores or (distance_threshold is not None) or use_reranker
+        all_results_raw = search_files(
+            q,
+            k=k,
+            directory=directories,
+            include_distances=need_distances,
+            use_reranker=use_reranker,
+        )
+        
+        # Compute query-level confidence from reranker scores (if available).
+        query_conf_score, query_conf_level = _compute_confidence(all_results_raw)
+        
+        # Work on a copy we can mutate without losing the raw data used for confidence.
+        all_results = list(all_results_raw)
         
         # Apply distance threshold filter if specified
         # Example: threshold=0.3 means "only show results with distance <= 0.3"
@@ -95,11 +126,21 @@ def api_search(request):
             if include_scores:
                 # Results are dicts: [{"path": "...", "distance": 0.2}, ...]
                 # Filter: keep only results where distance <= threshold
-                all_results = [r for r in all_results if r.get("distance", float('inf')) <= distance_threshold]
+                all_results = [
+                    r
+                    for r in all_results
+                    if isinstance(r, dict)
+                    and r.get("distance", float("inf")) <= distance_threshold
+                ]
             else:
                 # Results are dicts but user doesn't want scores in response
                 # Filter first, then extract just paths
-                filtered = [r for r in all_results if r.get("distance", float('inf')) <= distance_threshold]
+                filtered = [
+                    r
+                    for r in all_results
+                    if isinstance(r, dict)
+                    and r.get("distance", float("inf")) <= distance_threshold
+                ]
                 all_results = [r["path"] for r in filtered]
         elif not include_scores:
             # No threshold, but user doesn't want scores
@@ -112,14 +153,19 @@ def api_search(request):
         items = all_results[start:end]
         has_next = len(all_results) > end
         
-        return JsonResponse({
-            "query": q,
-            "directories": directories,
-            "page": page,
-            "page_size": page_size,
-            "has_next": has_next,
-            "results": items,
-        })
+        return JsonResponse(
+            {
+                "query": q,
+                "directories": directories,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next,
+                "results": items,
+                # Reranker-based confidence for the query as a whole.
+                "query_confidence_score": query_conf_score,
+                "query_confidence_level": query_conf_level,
+            }
+        )
     else:
         # Legacy mode: use k parameter
         k_str = request.GET.get("k", "5")
@@ -130,23 +176,55 @@ def api_search(request):
         except ValueError:
             k = 5
         
-        # DISTANCE FILTERING LOGIC (same as pagination mode above)
-        # Get distances if user wants scores OR wants to filter by threshold
-        need_distances = include_scores or (distance_threshold is not None)
-        results = search_files(q, k=k, directory=directories, include_distances=need_distances, use_reranker=use_reranker)
+        # DISTANCE / SCORE FETCHING LOGIC (same as pagination mode above)
+        # Get distances if user wants scores, wants to filter by threshold,
+        # OR wants reranker-based confidence.
+        need_distances = include_scores or (distance_threshold is not None) or use_reranker
+        results_raw = search_files(
+            q,
+            k=k,
+            directory=directories,
+            include_distances=need_distances,
+            use_reranker=use_reranker,
+        )
+        
+        # Compute query-level confidence from reranker scores (if available).
+        query_conf_score, query_conf_level = _compute_confidence(results_raw)
+        
+        # Work on a copy we can mutate without losing the raw data used for confidence.
+        results = list(results_raw)
         
         # Apply distance threshold filter if specified
         if distance_threshold is not None:
             if include_scores:
                 # Keep dicts with distance, but filter by threshold
-                results = [r for r in results if r.get("distance", float('inf')) <= distance_threshold]
+                results = [
+                    r
+                    for r in results
+                    if isinstance(r, dict)
+                    and r.get("distance", float("inf")) <= distance_threshold
+                ]
             else:
                 # Filter dicts, then extract just paths
-                filtered = [r for r in results if r.get("distance", float('inf')) <= distance_threshold]
+                filtered = [
+                    r
+                    for r in results
+                    if isinstance(r, dict)
+                    and r.get("distance", float("inf")) <= distance_threshold
+                ]
                 results = [r["path"] for r in filtered]
         elif not include_scores:
             # No threshold, convert dicts to paths for backward compatibility
             results = [r["path"] if isinstance(r, dict) else r for r in results]
         
-        return JsonResponse({"query": q, "directories": directories, "results": results})
+        return JsonResponse(
+            {
+                "query": q,
+                "directories": directories,
+                "results": results,
+                # Reranker-based confidence for the query as a whole.
+                "query_confidence_score": query_conf_score,
+                "query_confidence_level": query_conf_level,
+            }
+        )
 

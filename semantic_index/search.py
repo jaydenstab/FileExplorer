@@ -143,8 +143,10 @@ def search_files(
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     
     # Convert query to embedding vector (do this once, reuse for all directories)
+    # Use normalized embeddings to match how documents were indexed, so that
+    # cosine-distance-based similarity behaves as expected.
     model = get_model()
-    q_emb = model.encode([query]).tolist()
+    q_emb = model.encode([query], normalize_embeddings=True).tolist()
     
     # Collect results from all directories
     all_metas = []

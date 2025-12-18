@@ -1,6 +1,3 @@
-"""
-Test script: Reranker functionality - Compare distance-based vs reranker-based ranking
-"""
 import requests
 
 BASE_URL = "http://127.0.0.1:8000/api"
@@ -80,7 +77,7 @@ test_queries = ["neural networks", "transgender", "cybersecurity"]
 for query in test_queries:
     print(f"\nQuery: '{query}'")
     response = requests.get(
-        f"{BASE_URL}/search?q={query}&dir=documents1&include_scores=true&k=3",
+        f"{BASE_URL}/search?q={query}&dir=documents1&include_scores=true&k=5",
         timeout=10
     )
     results = response.json()
