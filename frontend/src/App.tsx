@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { SearchBar } from './components/SearchBar';
+import { StatusBar, type StatusState } from './components/StatusBar';
 import { RotateCw, Folder, FileText, CheckCircle2, ChevronLeft, ChevronRight, X, ExternalLink } from 'lucide-react';
 import { Theme } from './components/ui/theme';
 import { searchFiles, openFile, startReindex, getReindexStatus, type SearchResponse, type PreviewData, type ReindexStatusResponse } from './lib/api';
@@ -101,11 +102,14 @@ export default function App() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusState>({ type: null, message: '' });
+  const [pendingFileMode, setPendingFileMode] = useState<'preview' | 'open_os' | null>(null);
   
   const queryClient = useQueryClient();
   const debounceTimeoutRef = useRef<number | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
   const errorTimeoutRef = useRef<number | null>(null);
+  const statusTimeoutRef = useRef<number | null>(null);
 
   // Stable query key for directories (sorted to ensure consistent key)
   const directoriesKey = useMemo(() => {
@@ -145,6 +149,9 @@ export default function App() {
       if (errorTimeoutRef.current) {
         window.clearTimeout(errorTimeoutRef.current);
       }
+      if (statusTimeoutRef.current) {
+        window.clearTimeout(statusTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -168,6 +175,24 @@ export default function App() {
     }),
   });
 
+  // Update status for search operations
+  useEffect(() => {
+    if (isSearching && debouncedQuery.trim()) {
+      setStatus({
+        type: 'search',
+        message: `Searching for "${debouncedQuery}"...`,
+      });
+    } else if (!isSearching && status.type === 'search') {
+      // Clear search status after a brief delay, but only if still search type
+      if (statusTimeoutRef.current) {
+        window.clearTimeout(statusTimeoutRef.current);
+      }
+      statusTimeoutRef.current = window.setTimeout(() => {
+        setStatus(prev => prev.type === 'search' ? { type: null, message: '' } : prev);
+      }, 300);
+    }
+  }, [isSearching, debouncedQuery, status.type]);
+
   // Start reindex mutation
   const startReindexMutation = useMutation({
     mutationFn: (directory: string) => startReindex(directory),
@@ -187,11 +212,21 @@ export default function App() {
     },
   });
 
-  // Handle status transitions
+  // Update status for reindex operations
   useEffect(() => {
-    if (!reindexStatus) return;
-
-    if (reindexStatus.status === 'completed') {
+    if (reindexStatus?.status === 'indexing') {
+      setStatus({
+        type: 'reindex',
+        message: `Indexing ${reindexStatus.directory}`,
+        progress: {
+          current: reindexStatus.current,
+          total: reindexStatus.total,
+          percent: reindexStatus.percent,
+          currentFile: reindexStatus.current_file,
+          phase: reindexStatus.phase,
+        },
+      });
+    } else if (reindexStatus?.status === 'completed') {
       // Show success message
       if (successTimeoutRef.current) {
         window.clearTimeout(successTimeoutRef.current);
@@ -204,18 +239,35 @@ export default function App() {
       // Invalidate search queries to refetch after reindexing
       queryClient.invalidateQueries({ queryKey: ['search'] });
       
-      // Clear jobId after delay to hide progress bar
+      // Clear status and jobId after delay, but only if still reindex type
+      if (statusTimeoutRef.current) {
+        window.clearTimeout(statusTimeoutRef.current);
+      }
+      statusTimeoutRef.current = window.setTimeout(() => {
+        setStatus(prev => prev.type === 'reindex' ? { type: null, message: '' } : prev);
+      }, 3000);
+      
       setTimeout(() => {
         setJobId(null);
       }, 3000);
-    } else if (reindexStatus.status === 'error') {
-      // Error is handled in error state below
+    } else if (reindexStatus?.status === 'error') {
+      // Clear status on error, but only if still reindex type
+      if (statusTimeoutRef.current) {
+        window.clearTimeout(statusTimeoutRef.current);
+      }
+      statusTimeoutRef.current = window.setTimeout(() => {
+        setStatus(prev => prev.type === 'reindex' ? { type: null, message: '' } : prev);
+      }, 2000);
+      
       // Stop polling by clearing jobId
       setTimeout(() => {
         setJobId(null);
       }, 5000);
+    } else if (!jobId && status.type === 'reindex') {
+      // Clear status when jobId is cleared
+      setStatus({ type: null, message: '' });
     }
-  }, [reindexStatus, queryClient]);
+  }, [reindexStatus, jobId, queryClient, status.type]);
 
   // Prefetch preview on hover
   const prefetchPreview = useCallback((path: string) => {
@@ -234,6 +286,13 @@ export default function App() {
         setPreviewData(data as PreviewData);
         // Cache the preview data
         queryClient.setQueryData(['preview', variables.path], data);
+        // Clear preview status, but only if still preview type
+        if (statusTimeoutRef.current) {
+          window.clearTimeout(statusTimeoutRef.current);
+        }
+        statusTimeoutRef.current = window.setTimeout(() => {
+          setStatus(prev => prev.type === 'preview' ? { type: null, message: '' } : prev);
+        }, 300);
       } else {
         if (successTimeoutRef.current) {
           window.clearTimeout(successTimeoutRef.current);
@@ -242,9 +301,35 @@ export default function App() {
         successTimeoutRef.current = window.setTimeout(() => {
           setShowSuccess(false);
         }, 2000);
+        // Clear open status, but only if still open type
+        if (statusTimeoutRef.current) {
+          window.clearTimeout(statusTimeoutRef.current);
+        }
+        statusTimeoutRef.current = window.setTimeout(() => {
+          setStatus(prev => prev.type === 'open' ? { type: null, message: '' } : prev);
+        }, 500);
       }
     },
   });
+
+  // Update status for file operations
+  useEffect(() => {
+    if (openFileMutation.isPending && pendingFileMode) {
+      if (pendingFileMode === 'preview') {
+        setStatus({
+          type: 'preview',
+          message: 'Loading preview...',
+        });
+      } else {
+        setStatus({
+          type: 'open',
+          message: 'Opening file...',
+        });
+      }
+    } else if (!openFileMutation.isPending && pendingFileMode) {
+      setPendingFileMode(null);
+    }
+  }, [openFileMutation.isPending, pendingFileMode]);
 
   // Use searchView data (already mapped via select)
   const searchResults: FileItem[] = searchView?.items || [];
@@ -338,6 +423,8 @@ export default function App() {
       }
     }
     
+    // Set pending mode for status tracking
+    setPendingFileMode(mode);
     openFileMutation.mutate({ path, mode });
   }, [openFileMutation, queryClient]);
 
@@ -478,44 +565,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Progress Bar */}
-            {reindexStatus && reindexStatus.status === 'indexing' && (
-              <div className="mb-8 max-w-2xl mx-auto">
-                <div className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-[var(--color-foreground)]">
-                      Indexing {reindexStatus.directory}
-                    </span>
-                    <span className="text-sm text-[var(--color-foreground)]/60">
-                      {reindexStatus.percent.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="w-full bg-[var(--color-muted)] rounded-full h-2 mb-2">
-                    <div
-                      className="bg-[var(--color-primary)] h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${reindexStatus.percent}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-[var(--color-foreground)]/60">
-                    <span>
-                      {reindexStatus.current_file && (
-                        <span className="truncate max-w-md inline-block">
-                          {reindexStatus.current_file.split('/').pop()}
-                        </span>
-                      )}
-                    </span>
-                    <span>
-                      {reindexStatus.current} / {reindexStatus.total} files
-                    </span>
-                  </div>
-                  {reindexStatus.phase && (
-                    <div className="text-xs text-[var(--color-foreground)]/40 mt-1">
-                      Phase: {reindexStatus.phase}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
             {/* Error Message */}
             {errorMessage && (
@@ -597,6 +646,9 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Status Bar */}
+      <StatusBar status={status} />
 
       {/* Preview Modal */}
       {previewData && (
