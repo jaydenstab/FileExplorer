@@ -22,6 +22,9 @@ def api_search(request):
     - include_scores (optional): If "true", return results with distance scores (default: false)
     - distance_threshold (optional): Filter results by maximum distance (lower = better match, default: no filter)
     - use_reranker (optional): If "true", use reranker to improve ranking (default: true). If "false", use distance-based ranking only.
+    - min_confidence (optional): Only return results at or above this confidence: "high", "medium", or "low".
+                                 E.g. "medium" hides low-confidence answers; "high" shows only high-confidence.
+                                 Only applied when use_reranker=true (uses per-result rerank_score).
     
     Returns JSON with the query and list of matching file paths.
     If pagination is used, also returns page, page_size, and has_next.

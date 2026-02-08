@@ -21,6 +21,10 @@ CHROMA_DIR = BASE_DIR / ".chroma"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_MODEL = os.getenv("SEMANTIC_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 MAX_FILES = 200  # Safety limit to prevent accidentally indexing too many files
+# Max file size to index (bytes). Larger files are skipped so they don't dominate search results.
+# Override with SEMANTIC_MAX_FILE_SIZE_BYTES env var (e.g. 10485760 for 10MB).
+DEFAULT_MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+MAX_FILE_SIZE_BYTES = int(os.environ.get("SEMANTIC_MAX_FILE_SIZE_BYTES", str(DEFAULT_MAX_FILE_SIZE_BYTES)))
 CHUNK_SIZE = 1000  # Characters per chunk
 CHUNK_OVERLAP = 200  # Overlap between chunks to preserve context
 SUPPORTED_EXTS = {".pdf", ".txt"}
@@ -86,12 +90,22 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
 
 
 def _list_files(documents_dir: Path) -> List[Path]:
-    """Find all PDF and text files in the specified documents folder."""
+    """Find all PDF and text files in the specified documents folder.
+    Files larger than MAX_FILE_SIZE_BYTES are skipped so they don't dominate search results.
+    """
     documents_dir.mkdir(parents=True, exist_ok=True)
     files: List[Path] = []
     for ext in SUPPORTED_EXTS:
         files.extend(sorted(documents_dir.rglob(f"*{ext}")))
-    return files[:MAX_FILES]
+    # Skip files over size threshold (prevents giant files from dominating results)
+    within_size: List[Path] = []
+    for f in files:
+        try:
+            if f.stat().st_size <= MAX_FILE_SIZE_BYTES:
+                within_size.append(f)
+        except OSError:
+            continue  # Skip if we can't stat (e.g. permission, deleted)
+    return within_size[:MAX_FILES]
 
 
 def _relative_path(p: Path) -> str:
