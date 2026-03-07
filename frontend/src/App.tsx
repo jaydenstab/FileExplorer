@@ -2,9 +2,9 @@ import { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { SearchBar } from './components/SearchBar';
 import { StatusBar, type StatusState } from './components/StatusBar';
-import { RotateCw, Folder, FileText, CheckCircle2, ChevronLeft, ChevronRight, X, ExternalLink } from 'lucide-react';
+import { RotateCw, Folder, FileText, CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, X, ExternalLink, AlertCircle, SlidersHorizontal } from 'lucide-react';
 import { Theme } from './components/ui/theme';
-import { searchFiles, openFile, startReindex, getReindexStatus, type SearchResponse, type PreviewData, type ReindexStatusResponse } from './lib/api';
+import { searchFiles, openFile, startReindex, getReindexStatus, type SearchResponse, type SearchOptions, type PreviewData, type ReindexStatusResponse } from './lib/api';
 
 interface FileItem {
   id: string;
@@ -22,6 +22,10 @@ interface SearchView {
 
 const SEARCH_DEBOUNCE_MS = 600;
 const DEFAULT_PAGE_SIZE = 10;
+
+const DEFAULT_SEARCH_OPTIONS: SearchOptions = {
+  useReranker: true,
+};
 
 // Available directories (can be made dynamic later via API)
 const AVAILABLE_DIRECTORIES = ['documents1', 'documents2'];
@@ -98,7 +102,14 @@ export default function App() {
   const [selectedDirectories, setSelectedDirectories] = useState<string[]>([AVAILABLE_DIRECTORIES[0]]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [minConfidence, setMinConfidence] = useState<'' | 'high' | 'medium' | 'low'>('');
+  const [distanceThreshold, setDistanceThreshold] = useState('');
+  const [useReranker, setUseReranker] = useState(true);
+  const [selectedFileTypes, setSelectedFileTypes] = useState<string[]>([]);
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewErrorPath, setPreviewErrorPath] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -115,6 +126,26 @@ export default function App() {
   const directoriesKey = useMemo(() => {
     return [...selectedDirectories].sort().join(',');
   }, [selectedDirectories]);
+
+  // Build SearchOptions from filter state (only include non-default values)
+  const searchOptions = useMemo((): SearchOptions => {
+    const opts: SearchOptions = { useReranker };
+    if (minConfidence) opts.minConfidence = minConfidence;
+    const dist = parseFloat(distanceThreshold);
+    if (!Number.isNaN(dist) && dist >= 0) opts.distanceThreshold = Math.max(0, dist);
+    if (selectedFileTypes.length > 0) opts.fileTypes = [...selectedFileTypes].sort();
+    return opts;
+  }, [minConfidence, distanceThreshold, useReranker, selectedFileTypes]);
+
+  // Stable key for React Query cache separation by filter set
+  const searchOptionsKey = useMemo(() => {
+    return JSON.stringify({
+      mc: minConfidence,
+      dt: distanceThreshold,
+      ur: useReranker,
+      ft: [...selectedFileTypes].sort(),
+    });
+  }, [minConfidence, distanceThreshold, useReranker, selectedFileTypes]);
 
   // Debounce search query
   useEffect(() => {
@@ -155,14 +186,24 @@ export default function App() {
     };
   }, []);
 
+  // Reset pagination when filters change (skip initial mount)
+  const prevSearchOptionsKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevSearchOptionsKeyRef.current !== null && prevSearchOptionsKeyRef.current !== searchOptionsKey) {
+      setCurrentPage(1);
+    }
+    prevSearchOptionsKeyRef.current = searchOptionsKey;
+  }, [searchOptionsKey]);
+
   // Search query with cancellable requests and keepPreviousData
   const {
     data: searchView,
     isFetching: isSearching,
     error: searchError,
   } = useQuery<SearchResponse, Error, SearchView>({
-    queryKey: ['search', debouncedQuery, directoriesKey, currentPage, pageSize],
-    queryFn: ({ signal }) => searchFiles(debouncedQuery, selectedDirectories, currentPage, pageSize, signal),
+    queryKey: ['search', debouncedQuery, directoriesKey, searchOptionsKey, currentPage, pageSize],
+    queryFn: ({ signal }) =>
+      searchFiles(debouncedQuery, selectedDirectories, currentPage, pageSize, searchOptions, signal),
     enabled: !!debouncedQuery.trim(),
     placeholderData: keepPreviousData,
     staleTime: 300_000, // 5 minutes
@@ -283,6 +324,9 @@ export default function App() {
     mutationFn: ({ path, mode }: { path: string; mode: 'preview' | 'open_os' }) => openFile(path, mode),
     onSuccess: (data, variables) => {
       if (variables.mode === 'preview') {
+        // Clear any previous errors
+        setPreviewError(null);
+        setPreviewErrorPath(null);
         setPreviewData(data as PreviewData);
         // Cache the preview data
         queryClient.setQueryData(['preview', variables.path], data);
@@ -308,6 +352,21 @@ export default function App() {
         statusTimeoutRef.current = window.setTimeout(() => {
           setStatus(prev => prev.type === 'open' ? { type: null, message: '' } : prev);
         }, 500);
+      }
+    },
+    onError: (error: Error, variables) => {
+      if (variables.mode === 'preview') {
+        // Store error message and path for display in preview panel
+        setPreviewError(error.message);
+        setPreviewErrorPath(variables.path);
+        setPreviewData(null);
+        // Clear preview status
+        if (statusTimeoutRef.current) {
+          window.clearTimeout(statusTimeoutRef.current);
+        }
+        statusTimeoutRef.current = window.setTimeout(() => {
+          setStatus(prev => prev.type === 'preview' ? { type: null, message: '' } : prev);
+        }, 300);
       }
     },
   });
@@ -339,13 +398,13 @@ export default function App() {
   useEffect(() => {
     if (!debouncedQuery.trim() || !hasNext) return;
     queryClient.prefetchQuery({
-      queryKey: ['search', debouncedQuery, directoriesKey, currentPage + 1, pageSize],
+      queryKey: ['search', debouncedQuery, directoriesKey, searchOptionsKey, currentPage + 1, pageSize],
       queryFn: ({ signal }) =>
-        searchFiles(debouncedQuery, selectedDirectories, currentPage + 1, pageSize, signal),
+        searchFiles(debouncedQuery, selectedDirectories, currentPage + 1, pageSize, searchOptions, signal),
       staleTime: 300_000,
       gcTime: 120_000,
     });
-  }, [debouncedQuery, directoriesKey, currentPage, pageSize, hasNext, selectedDirectories, queryClient]);
+  }, [debouncedQuery, directoriesKey, searchOptionsKey, searchOptions, currentPage, pageSize, hasNext, selectedDirectories, queryClient]);
   
   // More accurate total results calculation
   const totalResults = useMemo(() => {
@@ -386,6 +445,14 @@ export default function App() {
     startReindexMutation.mutate(dirToIndex);
   }, [selectedDirectories, startReindexMutation, reindexStatus]);
 
+
+  const handleResetFilters = useCallback(() => {
+    setMinConfidence('');
+    setDistanceThreshold('');
+    setUseReranker(true);
+    setSelectedFileTypes([]);
+    setCurrentPage(1);
+  }, []);
 
   const handleDirectoryToggle = useCallback((directory: string) => {
     setSelectedDirectories(prev => {
@@ -430,7 +497,25 @@ export default function App() {
 
   const closePreview = useCallback(() => {
     setPreviewData(null);
+    setPreviewError(null);
+    setPreviewErrorPath(null);
   }, []);
+
+  // Handle ESC key to close preview
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && (previewData || previewError)) {
+        closePreview();
+      }
+    };
+
+    if (previewData || previewError) {
+      window.addEventListener('keydown', handleEscape);
+      return () => {
+        window.removeEventListener('keydown', handleEscape);
+      };
+    }
+  }, [previewData, previewError, closePreview]);
 
   const handlePageChange = useCallback((newPage: number) => {
     if (newPage >= 1 && (!hasNext || newPage <= currentPage + 1)) {
@@ -509,7 +594,7 @@ export default function App() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className={`flex flex-col overflow-hidden transition-all duration-300 ${previewData ? 'flex-[0_0_60%]' : 'flex-1'}`}>
         {/* Header with Theme Toggle */}
         <div className="flex items-center justify-between p-6 border-b border-[var(--color-border)]">
           <h1 className="text-[var(--color-foreground)] text-3xl font-bold tracking-tight">
@@ -522,12 +607,108 @@ export default function App() {
         <div className="flex-1 overflow-y-auto px-6 py-8">
           <div className="max-w-4xl mx-auto">
             {/* Search Bar */}
-            <div className="mb-8">
+            <div className="mb-4">
               <SearchBar
                 value={searchQuery}
                 onChange={handleSearch}
                 placeholder="Search files and folders..."
               />
+            </div>
+
+            {/* Advanced Search Controls */}
+            <div className="mb-8">
+              <button
+                onClick={() => setAdvancedExpanded((p) => !p)}
+                className="flex items-center gap-2 text-sm text-[var(--color-foreground)]/70 hover:text-[var(--color-foreground)] transition-colors"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                Advanced search
+                {advancedExpanded ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </button>
+              {advancedExpanded && (
+                <div className="mt-4 p-4 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg space-y-4">
+                  <div className="flex flex-wrap gap-4 items-end">
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-1">
+                        Min confidence
+                      </label>
+                      <select
+                        value={minConfidence}
+                        onChange={(e) => setMinConfidence((e.target.value || '') as '' | 'high' | 'medium' | 'low')}
+                        className="px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-foreground)]"
+                      >
+                        <option value="">Any</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-1">
+                        Max distance <span className="text-[var(--color-foreground)]/50 font-normal">(0-1)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={distanceThreshold}
+                        onChange={(e) => setDistanceThreshold(e.target.value)}
+                        placeholder="0-1"
+                        className="w-24 px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-foreground)]/40"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="use-reranker"
+                        checked={useReranker}
+                        onChange={(e) => setUseReranker(e.target.checked)}
+                        className="rounded border-[var(--color-border)]"
+                      />
+                      <label htmlFor="use-reranker" className="text-sm text-[var(--color-foreground)]/80">
+                        Use reranker
+                      </label>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-1">
+                        File types
+                      </label>
+                      <div className="flex gap-2">
+                        {['pdf', 'txt'].map((ext) => {
+                          const isSelected = selectedFileTypes.includes(ext);
+                          return (
+                            <button
+                              key={ext}
+                              onClick={() =>
+                                setSelectedFileTypes((prev) =>
+                                  isSelected ? prev.filter((x) => x !== ext) : [...prev, ext]
+                                )
+                              }
+                              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                isSelected
+                                  ? 'bg-[var(--color-primary)]/20 text-[var(--color-primary)] border border-[var(--color-primary)]/50'
+                                  : 'bg-[var(--color-muted)] text-[var(--color-foreground)]/70 border border-transparent hover:border-[var(--color-border)]'
+                              }`}
+                            >
+                              .{ext}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleResetFilters}
+                      className="px-3 py-2 text-sm text-[var(--color-foreground)]/60 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded-lg transition-colors"
+                    >
+                      Reset filters
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Loading Indicator - only show when no previous data */}
@@ -579,16 +760,44 @@ export default function App() {
                 <p className="text-[var(--color-error)] text-center">
                   No files found matching your search in {getDirectoriesText()}. If this is the first time searching these directories, try clicking "Reindex Files" to index them first.
                 </p>
+                {(() => {
+                  const parts: string[] = [];
+                  if (minConfidence) parts.push(`Confidence: ${minConfidence}`);
+                  if (distanceThreshold && !Number.isNaN(parseFloat(distanceThreshold)))
+                    parts.push(`Distance ≤ ${distanceThreshold}`);
+                  if (!useReranker) parts.push('No reranker');
+                  if (selectedFileTypes.length > 0) parts.push(`Types: ${selectedFileTypes.join(', ')}`);
+                  if (parts.length === 0) return null;
+                  return (
+                    <p className="text-sm text-[var(--color-foreground)]/50 text-center mt-2">
+                      Active filters: {parts.join(' · ')}
+                    </p>
+                  );
+                })()}
               </div>
             )}
 
             {/* Results Section */}
             {searchResults.length > 0 && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                   <p className="text-[var(--color-foreground)]/60">
                     Found {totalResults > 0 ? totalResults : searchResults.length} result{(totalResults > 0 ? totalResults : searchResults.length) !== 1 ? 's' : ''} in {getDirectoriesText()}
                   </p>
+                  {(() => {
+                    const parts: string[] = [];
+                    if (minConfidence) parts.push(`Confidence: ${minConfidence}`);
+                    if (distanceThreshold && !Number.isNaN(parseFloat(distanceThreshold)))
+                      parts.push(`Distance ≤ ${distanceThreshold}`);
+                    if (!useReranker) parts.push('No reranker');
+                    if (selectedFileTypes.length > 0) parts.push(`Types: ${selectedFileTypes.join(', ')}`);
+                    if (parts.length === 0) return null;
+                    return (
+                      <p className="text-xs text-[var(--color-foreground)]/50">
+                        {parts.join(' · ')}
+                      </p>
+                    );
+                  })()}
                 </div>
                 
                 <div className="space-y-2">
@@ -650,59 +859,112 @@ export default function App() {
       {/* Status Bar */}
       <StatusBar status={status} />
 
-      {/* Preview Modal */}
-      {previewData && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closePreview}>
-          <div 
-            className="bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Preview Header */}
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-              <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-semibold text-[var(--color-foreground)] truncate">
-                  {previewData.name}
-                </h2>
-                <p className="text-sm text-[var(--color-foreground)]/60 truncate font-mono">
-                  {previewData.path}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleFileClick({ type: 'file', path: previewData.path, name: previewData.name, id: previewData.path } as FileItem, 'open_os')}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
-                  title="Open with system application"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Open
-                </button>
+      {/* Preview Panel */}
+      {(previewData || previewError) && (
+        <div className={`flex-[0_0_40%] min-w-[400px] max-w-[600px] border-l border-[var(--color-border)] bg-[var(--color-background)] flex flex-col overflow-hidden transition-transform duration-300 ease-in-out`}>
+          {previewError ? (
+            <>
+              {/* Error Header */}
+              <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] flex-shrink-0 bg-[var(--color-background)] sticky top-0 z-10">
+                <div className="flex-1 min-w-0 pr-4">
+                  <h2 className="text-lg font-semibold text-[var(--color-error)] truncate">
+                    Preview Error
+                  </h2>
+                  {previewErrorPath && (
+                    <p className="text-sm text-[var(--color-foreground)]/60 truncate font-mono mt-1">
+                      {previewErrorPath}
+                    </p>
+                  )}
+                </div>
                 <button
                   onClick={closePreview}
-                  className="p-2 text-[var(--color-foreground)]/60 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
+                  className="p-2 text-[var(--color-foreground)]/60 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors flex-shrink-0"
+                  title="Close preview"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
-            </div>
 
-            {/* Preview Content */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {previewData.type === 'text' ? (
-                <pre className="text-sm text-[var(--color-foreground)] whitespace-pre-wrap font-mono">
-                  {previewData.content}
-                </pre>
-              ) : (
-                <div className="text-sm text-[var(--color-foreground)]">
-                  <p className="mb-4 text-[var(--color-foreground)]/60">
-                    PDF Preview: Showing first {previewData.preview_pages || 10} of {previewData.pages || 0} pages
+              {/* Error Content */}
+              <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center">
+                <div className="text-center max-w-md">
+                  <AlertCircle className="w-12 h-12 text-[var(--color-error)] mx-auto mb-4" />
+                  <p className="text-[var(--color-error)] mb-6 text-base">
+                    {previewError}
                   </p>
-                  <pre className="whitespace-pre-wrap font-mono text-sm">
+                  {previewErrorPath && previewError.toLowerCase().includes('too large') && (
+                    <button
+                      onClick={() => {
+                        if (previewErrorPath) {
+                          const fileItem: FileItem = {
+                            id: previewErrorPath,
+                            name: previewErrorPath.split('/').pop() || '',
+                            path: `/${previewErrorPath}`,
+                            type: 'file',
+                          };
+                          handleFileClick(fileItem, 'open_os');
+                          closePreview();
+                        }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary)]/80 text-white rounded-lg transition-colors mx-auto"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      Open with System Application
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : previewData ? (
+            <>
+              {/* Preview Header */}
+              <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] flex-shrink-0 bg-[var(--color-background)] sticky top-0 z-10">
+                <div className="flex-1 min-w-0 pr-4">
+                  <h2 className="text-lg font-semibold text-[var(--color-foreground)] truncate">
+                    {previewData.name}
+                  </h2>
+                  <p className="text-sm text-[var(--color-foreground)]/60 truncate font-mono">
+                    {previewData.path}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleFileClick({ type: 'file', path: previewData.path, name: previewData.name, id: previewData.path } as FileItem, 'open_os')}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
+                    title="Open with system application"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open
+                  </button>
+                  <button
+                    onClick={closePreview}
+                    className="p-2 text-[var(--color-foreground)]/60 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
+                    title="Close preview"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Preview Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {previewData.type === 'text' ? (
+                  <pre className="text-sm text-[var(--color-foreground)] whitespace-pre-wrap font-mono">
                     {previewData.content}
                   </pre>
-                </div>
-              )}
-            </div>
-          </div>
+                ) : (
+                  <div className="text-sm text-[var(--color-foreground)]">
+                    <p className="mb-4 text-[var(--color-foreground)]/60">
+                      PDF Preview: Showing first {previewData.preview_pages || 10} of {previewData.pages || 0} pages
+                    </p>
+                    <pre className="whitespace-pre-wrap font-mono text-sm">
+                      {previewData.content}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : null}
         </div>
       )}
     </div>

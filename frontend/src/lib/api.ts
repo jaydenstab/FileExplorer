@@ -28,6 +28,15 @@ export interface SearchResponse {
   page_size: number;
   has_next: boolean;
   results: string[];
+  query_confidence_score?: number;
+  query_confidence_level?: 'low' | 'medium' | 'high';
+}
+
+export interface SearchOptions {
+  distanceThreshold?: number;
+  minConfidence?: 'high' | 'medium' | 'low';
+  useReranker?: boolean;
+  fileTypes?: string[];
 }
 
 export interface PreviewData {
@@ -68,6 +77,7 @@ export interface ReindexStatusResponse {
  * @param directories - Array of directory names to search
  * @param page - Page number (1-indexed)
  * @param pageSize - Number of results per page
+ * @param options - Optional filters: distanceThreshold, minConfidence, useReranker, fileTypes
  * @param signal - Optional AbortSignal for request cancellation
  */
 export const searchFiles = async (
@@ -75,6 +85,7 @@ export const searchFiles = async (
   directories: string[],
   page: number,
   pageSize: number,
+  options?: SearchOptions,
   signal?: AbortSignal
 ): Promise<SearchResponse> => {
   const dirsParam = directories.join(',');
@@ -84,6 +95,21 @@ export const searchFiles = async (
     page: page.toString(),
     page_size: pageSize.toString(),
   });
+
+  if (options) {
+    if (options.distanceThreshold != null && options.distanceThreshold >= 0) {
+      params.set('distance_threshold', options.distanceThreshold.toString());
+    }
+    if (options.minConfidence) {
+      params.set('min_confidence', options.minConfidence);
+    }
+    if (options.useReranker !== undefined) {
+      params.set('use_reranker', options.useReranker ? 'true' : 'false');
+    }
+    if (options.fileTypes && options.fileTypes.length > 0) {
+      params.set('file_types', options.fileTypes.join(','));
+    }
+  }
 
   const response = await fetch(`${API_BASE_URL}/search?${params.toString()}`, { signal });
 
