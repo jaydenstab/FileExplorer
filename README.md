@@ -2,63 +2,212 @@
 
 **problem:** files get messy, people have trouble finding what they're looking for
 
-**solution**: a file explorer that indexes files using "ai" (expanded below). allowing for a more holistic search over files
-- "indexing" involves ripping apart files and identifying what "topic" they're about, then storing that
-    - pdfs, text files -> identifying the content of pdfs (some processing might be needed)
-    - images -> identifying subjects, traits, "feeling" of the image
-    - BUCKET LIST ITEM: can be extended beyond just files. index web pages, chats, etc.
-        - more bucket list item: index gifs, videos, larger files (is it too much processing?)
-    - index is stored in a way that is easily updateable and searchable (e.g. vector store + reverse index)
-- "searching" involves looking at the index and finding a bunch of files
+**solution:** a file explorer that indexes files using "ai" (expanded below). allowing for a more holistic search over files
 
-**TECHNOLOGIES**
-- HTML/CSS/JS frontend
-- Python - starts a localhost:* server to serve frontend, communicates with the frontend and does the indexing and search 
-    - has a lot of ML libraries
-    
-#### Reindex Documents
-Rebuilds the semantic index from files in `documents/` folder.
+## What It Does
+
+- Indexes supported files into a vector database for semantic search
+- Searches across one or more document directories
+- Returns either plain file paths or scored results
+- Supports reranking for better final result quality
+- Exposes query-level and per-result relevance information
+- Supports background reindexing with progress polling
+
+## Tech Stack
+
+- Frontend: React + TypeScript + Vite
+- Backend: Django
+- Vector store: ChromaDB
+- Embeddings: `sentence-transformers` using `BAAI/bge-small-en-v1.5`
+- Reranker: `FlagEmbedding` using `BAAI/bge-reranker-v2-m3`
+
+## Supported Files
+
+- `.pdf`
+- `.txt`
+
+Files are indexed from directories relative to the project root, such as `documents1` and `documents2`.
+
+## Setup
+
+### Backend
 
 ```bash
-curl -X GET "http://127.0.0.1:8000/api/reindex"
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python manage.py runserver 8000
 ```
 
-Response:
+Backend runs at `http://127.0.0.1:8000/`.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend runs at `http://localhost:5173/`.
+
+## Reindex API
+
+There are two reindex flows:
+
+- Synchronous legacy endpoint: `GET /api/reindex`
+- Background job endpoint with progress tracking: `POST /api/reindex/start`
+
+### Reindex a Directory
+
+```bash
+curl "http://127.0.0.1:8000/api/reindex?dir=documents1"
+```
+
+Example response:
+
 ```json
 {
-    "indexed_chunks": 42
+  "indexed_chunks": 42,
+  "directory": "documents1"
 }
 ```
 
-#### Search Files
-Searches for files matching a query using semantic similarity.
+### Start Background Reindex
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/reindex/start?dir=documents1"
+```
+
+Example response:
+
+```json
+{
+  "job_id": "6612501c-9b41-4f8d-8fce-f3c99d9de0fb"
+}
+```
+
+### Poll Reindex Status
+
+```bash
+curl "http://127.0.0.1:8000/api/reindex/status?job_id=6612501c-9b41-4f8d-8fce-f3c99d9de0fb"
+```
+
+Example response:
+
+```json
+{
+  "job_id": "6612501c-9b41-4f8d-8fce-f3c99d9de0fb",
+  "status": "indexing",
+  "directory": "documents1",
+  "current": 3,
+  "total": 12,
+  "percent": 25.0,
+  "current_file": "documents1/file.pdf",
+  "phase": "reading",
+  "updated_at": "2026-03-07T03:05:09",
+  "error": null
+}
+```
+
+## Search API
+
+Search endpoint:
+
+```text
+GET /api/search
+```
+
+### Basic Search
 
 ```bash
 curl -G "http://127.0.0.1:8000/api/search" \
   --data-urlencode "q=rhetoric" \
+  --data-urlencode "dir=documents1" \
   --data-urlencode "k=5"
 ```
 
-Parameters:
-- `q` (required): Search query string
-- `k` (optional): Number of results to return (default: 5, max: 50)
+Example response without scores:
 
-Response:
 ```json
 {
-    "query": "rhetoric",
-    "results": [
-        "documents/how-to-write-good.pdf",
-        "documents/hw/essay-1.txt"
-    ]
+  "query": "rhetoric",
+  "directories": ["documents1"],
+  "results": [
+    "documents1/test-rhetoric.txt",
+    "documents1/topic_pdf_12.pdf"
+  ],
+  "query_confidence_score": 0.9989,
+  "query_confidence_level": "high"
 }
 ```
 
-### Implementation Details
+### Search with Scores, Reranking, and Filters
 
-- Uses ChromaDB for vector storage (persisted in `.chroma/` directory)
-- Uses `sentence-transformers` with `all-MiniLM-L6-v2` model for embeddings
+```bash
+curl -G "http://127.0.0.1:8000/api/search" \
+  --data-urlencode "q=neural networks" \
+  --data-urlencode "dirs=documents1,documents2" \
+  --data-urlencode "page=1" \
+  --data-urlencode "page_size=5" \
+  --data-urlencode "include_scores=true" \
+  --data-urlencode "use_reranker=true" \
+  --data-urlencode "min_confidence=medium" \
+  --data-urlencode "distance_threshold=1.0" \
+  --data-urlencode "file_types=pdf,txt"
+```
+
+Example response with scores:
+
+```json
+{
+  "query": "neural networks",
+  "directories": ["documents1", "documents2"],
+  "page": 1,
+  "page_size": 5,
+  "has_next": false,
+  "results": [
+    {
+      "path": "documents1/test-neural-networks.txt",
+      "distance": 0.3011,
+      "rerank_score": 0.9991
+    }
+  ],
+  "query_confidence_score": 0.9991,
+  "query_confidence_level": "high"
+}
+```
+
+### Search Parameters
+
+- `q` required: Search query string
+- `k` optional: Number of results to return when pagination is not used, default `5`, max `50`
+- `page` optional: Page number for pagination, default `1`
+- `page_size` optional: Results per page, default `5`, max `50`
+- `dir` optional: Single directory to search, default `documents1`
+- `dirs` optional: Comma-separated directories to search, overrides `dir`
+- `include_scores` optional: If `true`, returns result objects instead of plain paths
+- `use_reranker` optional: If `true`, reranks results and enables relevance filtering, default `true`
+- `min_confidence` optional: `low`, `medium`, or `high`; uses reranker score thresholds
+- `distance_threshold` optional: Maximum embedding distance, lower is better, valid range `0-2`
+- `file_types` optional: Comma-separated extensions such as `pdf,txt`
+
+## Relevance vs Distance
+
+The app exposes two different quality signals:
+
+- `distance`: embedding-space distance from the initial vector search, lower is better
+- `rerank_score`: reranker relevance score in the `0-1` range, higher is better
+
+`Min relevance` filters on `rerank_score`, while `Max distance` filters on embedding distance. Both are useful because they measure different parts of the retrieval pipeline.
+
+## Implementation Details
+
+- ChromaDB data is persisted in `.chroma/`
 - Files are chunked into 1000-character segments with 200-character overlap
-- Only scans files in `documents/` folder (safety limit: 200 files max)
-
-**GITHUB**: https://github.com/jaydenstab/FileExplorer
+- Supported extensions are `.pdf` and `.txt`
+- Embeddings are normalized before storage/querying
+- Each directory gets its own Chroma collection, e.g. `files_documents1`
+- Reindexing rebuilds the collection for the target directory from scratch
+- Large files are skipped using a configurable max file size
+- The indexer has a safety limit of 200 files per directory
