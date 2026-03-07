@@ -4,7 +4,7 @@ Search API views - handles semantic file search with pagination and filtering.
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from semantic_index.search import search_files
+from semantic_index.search import search_files, RerankerError
 
 from .search_filters import (
     apply_distance_threshold,
@@ -86,13 +86,16 @@ def api_search(request):
             page_size = 5
 
         k = min(page * page_size + 1, 200)
-        raw = search_files(
-            q,
-            k=k,
-            directory=directories,
-            include_distances=need_distances,
-            use_reranker=use_reranker,
-        )
+        try:
+            raw = search_files(
+                q,
+                k=k,
+                directory=directories,
+                include_distances=need_distances,
+                use_reranker=use_reranker,
+            )
+        except RerankerError as e:
+            return JsonResponse({"error": str(e)}, status=503)
         query_conf_score, query_conf_level = compute_confidence(raw)
         all_results = _apply_filters(raw)
 
@@ -118,13 +121,16 @@ def api_search(request):
     except ValueError:
         k = 5
 
-    raw = search_files(
-        q,
-        k=k,
-        directory=directories,
-        include_distances=need_distances,
-        use_reranker=use_reranker,
-    )
+    try:
+        raw = search_files(
+            q,
+            k=k,
+            directory=directories,
+            include_distances=need_distances,
+            use_reranker=use_reranker,
+        )
+    except RerankerError as e:
+        return JsonResponse({"error": str(e)}, status=503)
     query_conf_score, query_conf_level = compute_confidence(raw)
     results = _apply_filters(raw)
 

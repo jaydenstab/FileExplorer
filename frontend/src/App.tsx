@@ -4,13 +4,15 @@ import { SearchBar } from './components/SearchBar';
 import { StatusBar, type StatusState } from './components/StatusBar';
 import { RotateCw, Folder, FileText, CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, X, ExternalLink, AlertCircle, SlidersHorizontal } from 'lucide-react';
 import { Theme } from './components/ui/theme';
-import { searchFiles, openFile, startReindex, getReindexStatus, type SearchResponse, type SearchOptions, type PreviewData, type ReindexStatusResponse } from './lib/api';
+import { searchFiles, openFile, startReindex, getReindexStatus, type SearchResponse, type SearchOptions, type SearchResultItem, type PreviewData, type ReindexStatusResponse } from './lib/api';
 
 interface FileItem {
   id: string;
   name: string;
   path: string;
   type: 'file' | 'folder';
+  rerankScore?: number;
+  distance?: number;
 }
 
 interface SearchView {
@@ -18,6 +20,8 @@ interface SearchView {
   hasNext: boolean;
   page: number;
   pageSize: number;
+  queryConfidenceScore?: number;
+  queryConfidenceLevel?: 'low' | 'medium' | 'high';
 }
 
 const SEARCH_DEBOUNCE_MS = 600;
@@ -30,19 +34,34 @@ const DEFAULT_SEARCH_OPTIONS: SearchOptions = {
 // Available directories (can be made dynamic later via API)
 const AVAILABLE_DIRECTORIES = ['documents1', 'documents2'];
 
-// Convert backend file path to FileItem
-const pathToFileItem = (path: string, index: number): FileItem => {
+// Normalize backend result (path string or SearchResultItem) to FileItem
+const resultToFileItem = (raw: string | SearchResultItem, index: number): FileItem => {
+  const path = typeof raw === 'string' ? raw : raw.path;
   const parts = path.split('/');
   const name = parts[parts.length - 1];
-  // Determine if it's a folder (no extension) or file
   const hasExtension = name.includes('.');
-  return {
+  const item: FileItem = {
     id: `file-${index}-${path}`,
     name,
     path: path.startsWith('/') ? path : `/${path}`,
     type: hasExtension ? 'file' : 'folder',
   };
+  if (typeof raw === 'object') {
+    if (raw.rerank_score != null) item.rerankScore = raw.rerank_score;
+    if (raw.distance != null) item.distance = raw.distance;
+  }
+  return item;
 };
+
+// Format rerank score for display (0-1 -> percentage with one decimal)
+const formatRelevanceScore = (score: number): string => {
+  const pct = score * 100;
+  return `${pct % 1 === 0 ? pct : pct.toFixed(1)}%`;
+};
+
+// Valid range for embedding distance (Chroma cosine distance: 0-2)
+const DISTANCE_MIN = 0;
+const DISTANCE_MAX = 2;
 
 // Memoized ResultRow component to prevent unnecessary re-renders
 interface ResultRowProps {
@@ -50,9 +69,10 @@ interface ResultRowProps {
   onPreviewClick: () => void;
   onOpenClick: () => void;
   onMouseEnter: () => void;
+  showRerankScore?: boolean;
 }
 
-const ResultRow = memo(({ file, onPreviewClick, onOpenClick, onMouseEnter }: ResultRowProps) => {
+const ResultRow = memo(({ file, onPreviewClick, onOpenClick, onMouseEnter, showRerankScore }: ResultRowProps) => {
   return (
     <div
       onMouseEnter={onMouseEnter}
@@ -68,9 +88,19 @@ const ResultRow = memo(({ file, onPreviewClick, onOpenClick, onMouseEnter }: Res
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <h3 className="text-[var(--color-foreground)] group-hover:text-[var(--color-primary)] transition-colors mb-1 font-medium">
-                {file.name}
-              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-[var(--color-foreground)] group-hover:text-[var(--color-primary)] transition-colors mb-1 font-medium">
+                  {file.name}
+                </h3>
+                {showRerankScore && file.rerankScore != null && (
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-muted)] text-[var(--color-foreground)]/70"
+                    title="Relevance score (higher = better match)"
+                  >
+                    {formatRelevanceScore(file.rerankScore)}
+                  </span>
+                )}
+              </div>
               <p className="text-[var(--color-foreground)]/40 text-sm truncate font-mono">
                 {file.path}
               </p>
@@ -132,10 +162,18 @@ export default function App() {
     const opts: SearchOptions = { useReranker };
     if (minConfidence) opts.minConfidence = minConfidence;
     const dist = parseFloat(distanceThreshold);
-    if (!Number.isNaN(dist) && dist >= 0) opts.distanceThreshold = Math.max(0, dist);
+    if (!Number.isNaN(dist) && dist >= DISTANCE_MIN && dist <= DISTANCE_MAX) {
+      opts.distanceThreshold = Math.max(DISTANCE_MIN, Math.min(DISTANCE_MAX, dist));
+    }
     if (selectedFileTypes.length > 0) opts.fileTypes = [...selectedFileTypes].sort();
     return opts;
   }, [minConfidence, distanceThreshold, useReranker, selectedFileTypes]);
+
+  // Distance validation: invalid if non-empty and outside [0, 2]
+  const distanceNum = parseFloat(distanceThreshold);
+  const isDistanceInvalid =
+    distanceThreshold.trim() !== '' &&
+    (Number.isNaN(distanceNum) || distanceNum < DISTANCE_MIN || distanceNum > DISTANCE_MAX);
 
   // Stable key for React Query cache separation by filter set
   const searchOptionsKey = useMemo(() => {
@@ -209,10 +247,12 @@ export default function App() {
     staleTime: 300_000, // 5 minutes
     gcTime: 120_000, // 2 minutes: collect inactive search results sooner
     select: (data) => ({
-      items: data.results.map((path: string, index: number) => pathToFileItem(path, index)),
+      items: data.results.map((raw, index) => resultToFileItem(raw as string | SearchResultItem, index)),
       hasNext: data.has_next,
       page: data.page,
       pageSize: data.page_size,
+      queryConfidenceScore: data.query_confidence_score,
+      queryConfidenceLevel: data.query_confidence_level,
     }),
   });
 
@@ -442,6 +482,7 @@ export default function App() {
 
     const dirToIndex = selectedDirectories[0];
     setJobId(null); // Reset progress
+    setAdvancedExpanded(false); // Close advanced search when reindex runs
     startReindexMutation.mutate(dirToIndex);
   }, [selectedDirectories, startReindexMutation, reindexStatus]);
 
@@ -631,35 +672,48 @@ export default function App() {
               </button>
               {advancedExpanded && (
                 <div className="mt-4 p-4 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg space-y-4">
+                  <p className="text-xs text-[var(--color-foreground)]/50">
+                    Min relevance: reranker match score (when Use reranker is on); higher = better. Max distance: embedding distance (lower = better); valid range 0–2.
+                  </p>
                   <div className="flex flex-wrap gap-4 items-end">
                     <div>
-                      <label className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-1">
-                        Min confidence
+                      <label className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-1" title="Reranker match score (when Use reranker is on)">
+                        Min relevance
                       </label>
                       <select
                         value={minConfidence}
                         onChange={(e) => setMinConfidence((e.target.value || '') as '' | 'high' | 'medium' | 'low')}
-                        className="px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-foreground)]"
+                        disabled={!useReranker}
+                        className="px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-foreground)] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <option value="">Any</option>
                         <option value="low">Low</option>
                         <option value="medium">Medium</option>
                         <option value="high">High</option>
                       </select>
+                      {!useReranker && (
+                        <p className="text-xs text-[var(--color-foreground)]/50 mt-1">Only applies when Use reranker is on</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-1">
-                        Max distance <span className="text-[var(--color-foreground)]/50 font-normal">(0-1)</span>
+                        Max distance <span className="text-[var(--color-foreground)]/50 font-normal">(0–2)</span>
                       </label>
                       <input
                         type="number"
-                        min={0}
+                        min={DISTANCE_MIN}
+                        max={DISTANCE_MAX}
                         step={0.1}
                         value={distanceThreshold}
                         onChange={(e) => setDistanceThreshold(e.target.value)}
-                        placeholder="0-1"
-                        className="w-24 px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-foreground)]/40"
+                        placeholder="0–2"
+                        className={`w-24 px-3 py-2 bg-[var(--color-background)] border rounded-lg text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-foreground)]/40 ${
+                          isDistanceInvalid ? 'border-[var(--color-error)]' : 'border-[var(--color-border)]'
+                        }`}
                       />
+                      {isDistanceInvalid && (
+                        <p className="text-xs text-[var(--color-error)] mt-1">Enter a value between 0 and 2</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <input
@@ -762,8 +816,8 @@ export default function App() {
                 </p>
                 {(() => {
                   const parts: string[] = [];
-                  if (minConfidence) parts.push(`Confidence: ${minConfidence}`);
-                  if (distanceThreshold && !Number.isNaN(parseFloat(distanceThreshold)))
+                  if (minConfidence) parts.push(`Min relevance: ${minConfidence}`);
+                  if (distanceThreshold && !isDistanceInvalid)
                     parts.push(`Distance ≤ ${distanceThreshold}`);
                   if (!useReranker) parts.push('No reranker');
                   if (selectedFileTypes.length > 0) parts.push(`Types: ${selectedFileTypes.join(', ')}`);
@@ -781,13 +835,23 @@ export default function App() {
             {searchResults.length > 0 && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                  <p className="text-[var(--color-foreground)]/60">
-                    Found {totalResults > 0 ? totalResults : searchResults.length} result{(totalResults > 0 ? totalResults : searchResults.length) !== 1 ? 's' : ''} in {getDirectoriesText()}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[var(--color-foreground)]/60">
+                      Found {totalResults > 0 ? totalResults : searchResults.length} result{(totalResults > 0 ? totalResults : searchResults.length) !== 1 ? 's' : ''} in {getDirectoriesText()}
+                    </p>
+                    {useReranker && searchView?.queryConfidenceScore != null && searchView?.queryConfidenceLevel && (
+                      <span
+                        className="text-xs px-2 py-1 rounded-lg bg-[var(--color-muted)] text-[var(--color-foreground)]/70"
+                        title="Overall query relevance from reranker (higher = better match)"
+                      >
+                        Query relevance: {searchView.queryConfidenceLevel} ({formatRelevanceScore(searchView.queryConfidenceScore)})
+                      </span>
+                    )}
+                  </div>
                   {(() => {
                     const parts: string[] = [];
-                    if (minConfidence) parts.push(`Confidence: ${minConfidence}`);
-                    if (distanceThreshold && !Number.isNaN(parseFloat(distanceThreshold)))
+                    if (minConfidence) parts.push(`Min relevance: ${minConfidence}`);
+                    if (distanceThreshold && !isDistanceInvalid)
                       parts.push(`Distance ≤ ${distanceThreshold}`);
                     if (!useReranker) parts.push('No reranker');
                     if (selectedFileTypes.length > 0) parts.push(`Types: ${selectedFileTypes.join(', ')}`);
@@ -812,6 +876,7 @@ export default function App() {
                           prefetchPreview(file.path.slice(1));
                         }
                       }}
+                      showRerankScore={useReranker}
                     />
                   ))}
                 </div>

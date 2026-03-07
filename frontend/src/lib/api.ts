@@ -21,13 +21,21 @@ const errorFromResponse = async (response: Response, fallback: string) => {
   throw new Error(message);
 };
 
+/** Per-result item when include_scores=true; backend returns path + optional distance/rerank_score */
+export interface SearchResultItem {
+  path: string;
+  distance?: number;
+  rerank_score?: number;
+}
+
 export interface SearchResponse {
   query: string;
   directories: string[];
   page: number;
   page_size: number;
   has_next: boolean;
-  results: string[];
+  /** Path strings when include_scores=false; SearchResultItem when include_scores=true */
+  results: string[] | SearchResultItem[];
   query_confidence_score?: number;
   query_confidence_level?: 'low' | 'medium' | 'high';
 }
@@ -94,6 +102,7 @@ export const searchFiles = async (
     dirs: dirsParam,
     page: page.toString(),
     page_size: pageSize.toString(),
+    include_scores: 'true',
   });
 
   if (options) {

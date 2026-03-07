@@ -25,7 +25,9 @@ def parse_search_params(request) -> dict:
     distance_threshold: Optional[float] = None
     if distance_threshold_str:
         try:
-            distance_threshold = max(0.0, float(distance_threshold_str))
+            raw = float(distance_threshold_str)
+            # Clamp to valid range for cosine distance (0-2)
+            distance_threshold = max(0.0, min(2.0, raw))
         except ValueError:
             pass
 

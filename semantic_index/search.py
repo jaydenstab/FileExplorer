@@ -4,7 +4,7 @@ Semantic search module - queries the vector database to find files matching a se
 from typing import List, Dict, Optional, Tuple
 import chromadb
 from .indexer import CHROMA_DIR, get_model
-from .reranker import rerank_files
+from .reranker import rerank_files, RerankerError
 
 
 def _dedupe_preserve_order(items: List[str]) -> List[str]: # Not used
@@ -201,9 +201,9 @@ def search_files(
     if use_reranker and chunk_texts:
         aggregated = rerank_files(query, aggregated, chunk_texts, top_k=k)
     elif use_reranker and not chunk_texts:
-        # Reranker was requested but no chunk texts available
-        print(f"Warning: Reranker requested but no chunk texts available (documents were not retrieved)")
-        aggregated = aggregated[:k]
+        raise RerankerError(
+            "Reranker requested but no chunk texts available (documents were not retrieved)"
+        )
     else:
         # Limit to k results (already sorted by distance, best matches first)
         aggregated = aggregated[:k]

@@ -13,14 +13,19 @@ except ImportError:
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 
 
+class RerankerError(Exception):
+    """Raised when reranking is requested but fails to initialize or compute."""
+
+
 @lru_cache(maxsize=1)
 def _get_reranker():
     """Load and cache the reranker model (only loads once, reused for all operations)."""
     if FlagReranker is None:
-        raise ImportError(
+        raise RerankerError(
             "FlagEmbedding is not installed. Install it with: pip install FlagEmbedding"
         )
-    return FlagReranker(RERANKER_MODEL, use_fp16=True)
+    # use_fp16=False and devices="cpu" avoid meta-tensor / MPS compatibility issues
+    return FlagReranker(RERANKER_MODEL, use_fp16=False, devices="cpu")
 
 
 def rerank_files(
@@ -50,17 +55,13 @@ def rerank_files(
     """
     if not file_results or not chunk_texts:
         return file_results
-    
+
     try:
         reranker = _get_reranker()
-    except ImportError as e:
-        # If FlagEmbedding is not installed, return original results
-        print(f"Warning: FlagEmbedding not installed, skipping reranking: {e}")
-        return file_results
+    except RerankerError:
+        raise
     except Exception as e:
-        # If reranker fails to load, return original results
-        print(f"Warning: Reranker failed to load, skipping reranking: {e}")
-        return file_results
+        raise RerankerError(f"Reranker failed to initialize: {e}") from e
     
     # Prepare query-document pairs for reranking
     pairs = []
@@ -79,9 +80,10 @@ def rerank_files(
         valid_results.append(result)
     
     if not pairs:
-        print(f"Warning: No valid pairs for reranking (file_results: {len(file_results)}, chunk_texts: {len(chunk_texts)})")
-        return file_results
-    
+        raise RerankerError(
+            f"No valid pairs for reranking (file_results: {len(file_results)}, chunk_texts: {len(chunk_texts)})"
+        )
+
     # Compute reranker scores
     # normalize=True applies sigmoid to convert raw logits to 0-1 range
     # Higher scores (closer to 1) = better relevance match
@@ -91,9 +93,7 @@ def rerank_files(
         if not isinstance(scores, list):
             scores = [scores]
     except Exception as e:
-        # If reranking fails, return original results
-        print(f"Warning: Reranking computation failed, using original results: {e}")
-        return file_results
+        raise RerankerError(f"Reranker failed during scoring: {e}") from e
     
     # Add rerank scores to results
     for i, result in enumerate(valid_results):
