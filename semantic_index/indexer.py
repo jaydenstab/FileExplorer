@@ -5,11 +5,12 @@ and storing them in ChromaDB for semantic search.
 from pathlib import Path
 import os
 import chromadb
-import fitz  # PyMuPDF
 import time  # Added: for time.sleep() to add artificial delay (slow mode for testing)
 from typing import List, Optional, Callable  # Added: Optional and Callable for progress callback
 from functools import lru_cache
 from sentence_transformers import SentenceTransformer
+
+from .document_text import extract_document_text
 
 # Configuration constants
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -40,32 +41,6 @@ def _get_model() -> SentenceTransformer:
     overridden at runtime via the SEMANTIC_EMBEDDING_MODEL environment variable.
     """
     return SentenceTransformer(EMBEDDING_MODEL)
-
-
-def _read_text_file(path: str) -> str:
-    """Read text from a .txt file."""
-    p = Path(path)
-    with p.open("r", encoding="utf-8", errors="ignore") as f:
-        return f.read()
-
-
-def _read_pdf_text(path: str) -> str:
-    """Extract all text from a PDF file using PyMuPDF."""
-    text = ""
-    with fitz.open(path) as pdf:
-        for page in pdf:
-            text += page.get_text()
-    return text
-
-
-def _extract_text(path: str) -> str:
-    """Extract text from a file based on its extension (.pdf or .txt)."""
-    suffix = Path(path).suffix.lower()
-    if suffix == ".txt":
-        return _read_text_file(path)
-    if suffix == ".pdf":
-        return _read_pdf_text(path)
-    return ""
 
 
 def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
@@ -106,6 +81,12 @@ def _list_files(documents_dir: Path) -> List[Path]:
         except OSError:
             continue  # Skip if we can't stat (e.g. permission, deleted)
     return within_size[:MAX_FILES]
+
+
+def list_indexable_files(directory: str) -> List[Path]:
+    """PDF/txt paths under ``directory`` (relative to project root), respecting size and count limits."""
+    documents_dir = BASE_DIR / directory
+    return _list_files(documents_dir)
 
 
 def _relative_path(p: Path) -> str:
@@ -194,7 +175,7 @@ def index_documents(
         if slow_ms > 0:
             time.sleep(slow_ms / 1000.0)  # Convert milliseconds to seconds
         
-        text = _extract_text(str(f))
+        text = extract_document_text(str(f))
         if not text.strip():
             continue
         

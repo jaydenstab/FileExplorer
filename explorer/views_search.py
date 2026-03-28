@@ -1,47 +1,55 @@
 """
-Search API views - handles semantic file search with pagination and filtering.
+Search API views - semantic (vector DB + reranker) or plain-text (substring) mode.
 """
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from semantic_index.search import search_files, RerankerError
+from semantic_index.search import RerankerError
 
-from .search_filters import (
-    apply_distance_threshold,
-    apply_file_types,
-    apply_min_confidence,
-    compute_confidence,
-    results_to_paths,
+from .search_execution import (
+    apply_semantic_result_filters,
+    confidence_for_plain_text,
+    confidence_for_semantic,
+    finalize_plain_text_results,
+    plain_text_search_raw,
+    semantic_search_raw,
 )
 from .search_params import parse_search_params
+
+
+def _json_base(
+    *,
+    q: str,
+    directories: list,
+    search_mode: str,
+    query_confidence_score,
+    query_confidence_level,
+    **extra,
+):
+    body = {
+        "query": q,
+        "directories": directories,
+        "search_mode": search_mode,
+        "query_confidence_score": query_confidence_score,
+        "query_confidence_level": query_confidence_level,
+        **extra,
+    }
+    return JsonResponse(body)
 
 
 @require_GET
 def api_search(request):
     """
-    Search for files using semantic similarity.
+    Query parameters (existing):
+    - q, k, page, page_size, dir, dirs, include_scores,
+      distance_threshold, use_reranker, min_confidence, file_types
 
-    Query parameters:
-    - q (required): Search query string
-    - k (optional): Number of results to return (default: 5, max: 50) - used when pagination not specified
-    - page (optional): Page number for pagination (default: 1)
-    - page_size (optional): Number of results per page (default: 5, max: 50)
-    - dir (optional): Directory name to search in (default: "documents1"). Use for single directory.
-    - dirs (optional): Comma-separated list of directories to search (e.g., "documents1,documents2").
-                      If provided, overrides 'dir' parameter. Allows searching multiple directories.
-    - include_scores (optional): If "true", return results with distance scores (default: false)
-    - distance_threshold (optional): Filter results by maximum distance (lower = better match, default: no filter)
-    - use_reranker (optional): If "true", use reranker to improve ranking (default: true). If "false", use distance-based ranking only.
-    - min_confidence (optional): Only return results at or above this confidence: "high", "medium", or "low".
-                                 E.g. "medium" hides low-confidence answers; "high" shows only high-confidence.
-                                 Only applied when use_reranker=true (uses per-result rerank_score).
-    - file_types (optional): Comma-separated list of file types to include (e.g. "pdf,txt" or "pdf").
-                             Only results whose path ends with one of these extensions are returned.
-                             Extensions are normalized (e.g. "pdf" and ".pdf" both match .pdf files).
+    Plain-text mode (no Chroma / reranker):
+    - search_mode=text — substring search over file contents (default: semantic).
+    - case_sensitive=true — literal-case matching (default: false).
 
-    Returns JSON with the query and list of matching file paths.
-    If pagination is used, also returns page, page_size, and has_next.
-    If include_scores=true, results are dicts with 'path' and 'distance'.
+    With search_mode=text, distance_threshold / use_reranker / min_confidence are ignored.
+    When include_scores=true, each result includes ``match_count`` (non-overlapping substring hits).
     """
     params = parse_search_params(request)
     q = params["q"]
@@ -51,31 +59,23 @@ def api_search(request):
     use_reranker = params["use_reranker"]
     min_confidence_threshold = params["min_confidence_threshold"]
     allowed_extensions = params["allowed_extensions"]
+    search_mode = params["search_mode"]
+    case_sensitive = params["case_sensitive"]
 
     if not q:
         return JsonResponse({"error": "missing 'q' parameter"}, status=400)
     if not directories or not all(directories):
         return JsonResponse({"error": "at least one directory must be specified"}, status=400)
-
-    need_distances = include_scores or (distance_threshold is not None) or use_reranker
-
-    def _apply_filters(results):
-        out = list(results)
-        if use_reranker and min_confidence_threshold is not None:
-            out = apply_min_confidence(out, min_confidence_threshold)
-        if allowed_extensions is not None:
-            out = apply_file_types(out, allowed_extensions)
-        if distance_threshold is not None:
-            out = apply_distance_threshold(out, distance_threshold, include_scores)
-        elif not include_scores:
-            out = results_to_paths(out)
-        return out
+    if search_mode is None:
+        return JsonResponse(
+            {"error": "search_mode must be 'semantic' or 'text'"},
+            status=400,
+        )
 
     page_str = request.GET.get("page")
     size_str = request.GET.get("page_size")
 
     if page_str or size_str:
-        # Pagination mode
         try:
             page = max(1, int(page_str or "1"))
         except ValueError:
@@ -86,58 +86,94 @@ def api_search(request):
             page_size = 5
 
         k = min(page * page_size + 1, 200)
-        try:
-            raw = search_files(
+
+        if search_mode == "text":
+            raw = plain_text_search_raw(
                 q,
+                directories,
                 k=k,
-                directory=directories,
-                include_distances=need_distances,
-                use_reranker=use_reranker,
+                include_scores=include_scores,
+                allowed_extensions=allowed_extensions,
+                case_sensitive=case_sensitive,
             )
-        except RerankerError as e:
-            return JsonResponse({"error": str(e)}, status=503)
-        query_conf_score, query_conf_level = compute_confidence(raw)
-        all_results = _apply_filters(raw)
+            q_conf_score, q_conf_level = confidence_for_plain_text()
+            all_results = finalize_plain_text_results(raw, include_scores=include_scores)
+        else:
+            need_distances = (
+                include_scores or (distance_threshold is not None) or use_reranker
+            )
+            try:
+                raw = semantic_search_raw(
+                    q, directories, k, need_distances, use_reranker
+                )
+            except RerankerError as e:
+                return JsonResponse({"error": str(e)}, status=503)
+            q_conf_score, q_conf_level = confidence_for_semantic(raw)
+            all_results = apply_semantic_result_filters(
+                raw,
+                include_scores=include_scores,
+                use_reranker=use_reranker,
+                min_confidence_threshold=min_confidence_threshold,
+                allowed_extensions=allowed_extensions,
+                distance_threshold=distance_threshold,
+            )
 
         start = (page - 1) * page_size
         end = start + page_size
         items = all_results[start:end]
         has_next = len(all_results) > end
 
-        return JsonResponse({
-            "query": q,
-            "directories": directories,
-            "page": page,
-            "page_size": page_size,
-            "has_next": has_next,
-            "results": items,
-            "query_confidence_score": query_conf_score,
-            "query_confidence_level": query_conf_level,
-        })
+        return _json_base(
+            q=q,
+            directories=directories,
+            search_mode=search_mode,
+            query_confidence_score=q_conf_score,
+            query_confidence_level=q_conf_level,
+            page=page,
+            page_size=page_size,
+            has_next=has_next,
+            results=items,
+        )
 
-    # Legacy mode: use k parameter
     try:
         k = max(1, min(50, int(request.GET.get("k", "5"))))
     except ValueError:
         k = 5
 
-    try:
-        raw = search_files(
+    if search_mode == "text":
+        raw = plain_text_search_raw(
             q,
+            directories,
             k=k,
-            directory=directories,
-            include_distances=need_distances,
-            use_reranker=use_reranker,
+            include_scores=include_scores,
+            allowed_extensions=allowed_extensions,
+            case_sensitive=case_sensitive,
         )
-    except RerankerError as e:
-        return JsonResponse({"error": str(e)}, status=503)
-    query_conf_score, query_conf_level = compute_confidence(raw)
-    results = _apply_filters(raw)
+        q_conf_score, q_conf_level = confidence_for_plain_text()
+        results = finalize_plain_text_results(raw, include_scores=include_scores)
+    else:
+        need_distances = (
+            include_scores or (distance_threshold is not None) or use_reranker
+        )
+        try:
+            raw = semantic_search_raw(q, directories, k, need_distances, use_reranker)
+        except RerankerError as e:
+            return JsonResponse({"error": str(e)}, status=503)
+        q_conf_score, q_conf_level = confidence_for_semantic(raw)
+        results = apply_semantic_result_filters(
+            raw,
+            include_scores=include_scores,
+            use_reranker=use_reranker,
+            min_confidence_threshold=min_confidence_threshold,
+            allowed_extensions=allowed_extensions,
+            distance_threshold=distance_threshold,
+        )
 
-    return JsonResponse({
-        "query": q,
-        "directories": directories,
-        "results": results,
-        "query_confidence_score": query_conf_score,
-        "query_confidence_level": query_conf_level,
-    })
+    return _json_base(
+        q=q,
+        directories=directories,
+        search_mode=search_mode,
+        query_confidence_score=q_conf_score,
+        query_confidence_level=q_conf_level,
+        results=results,
+    )

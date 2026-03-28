@@ -4,10 +4,12 @@ Reranker module - uses BAAI/bge-reranker-v2-m3 to rerank search results for bett
 from typing import List, Dict, Tuple, Optional, Any
 from functools import lru_cache
 
+_FLAG_EMBEDDING_IMPORT_ERROR: Optional[BaseException] = None
 try:
     from FlagEmbedding import FlagReranker
-except ImportError:
+except ImportError as e:
     FlagReranker = None
+    _FLAG_EMBEDDING_IMPORT_ERROR = e
 
 # Reranker model configuration
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
@@ -21,8 +23,16 @@ class RerankerError(Exception):
 def _get_reranker():
     """Load and cache the reranker model (only loads once, reused for all operations)."""
     if FlagReranker is None:
+        hint = (
+            "Install deps from the project root: source venv/bin/activate && pip install -r requirements.txt "
+            "(use the same venv/Python as manage.py runserver)."
+        )
+        if _FLAG_EMBEDDING_IMPORT_ERROR is not None:
+            raise RerankerError(
+                f"FlagEmbedding failed to import ({_FLAG_EMBEDDING_IMPORT_ERROR}). {hint}"
+            ) from _FLAG_EMBEDDING_IMPORT_ERROR
         raise RerankerError(
-            "FlagEmbedding is not installed. Install it with: pip install FlagEmbedding"
+            f"FlagEmbedding is not available. {hint}"
         )
     # use_fp16=False and devices="cpu" avoid meta-tensor / MPS compatibility issues
     return FlagReranker(RERANKER_MODEL, use_fp16=False, devices="cpu")

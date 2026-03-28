@@ -8,7 +8,8 @@ def parse_search_params(request) -> dict:
     """
     Parse and validate search query parameters from a Django request.
     Returns a dict with: q, directories, include_scores, distance_threshold,
-    use_reranker, min_confidence_threshold, allowed_extensions.
+    use_reranker, min_confidence_threshold, allowed_extensions,
+    search_mode ("semantic" | "text"), case_sensitive (for text mode).
     """
     q = request.GET.get("q", "").strip()
 
@@ -49,6 +50,15 @@ def parse_search_params(request) -> dict:
                 ext = p if p.startswith(".") else f".{p}"
                 allowed_extensions.add(ext)
 
+    search_mode_raw = request.GET.get("search_mode", "semantic").strip().lower()
+    search_mode: Optional[str]
+    if search_mode_raw in ("semantic", "text"):
+        search_mode = search_mode_raw
+    else:
+        search_mode = None
+
+    case_sensitive = request.GET.get("case_sensitive", "false").lower() == "true"
+
     return {
         "q": q,
         "directories": directories,
@@ -57,4 +67,6 @@ def parse_search_params(request) -> dict:
         "use_reranker": use_reranker,
         "min_confidence_threshold": min_confidence_threshold,
         "allowed_extensions": allowed_extensions,
+        "search_mode": search_mode,
+        "case_sensitive": case_sensitive,
     }
