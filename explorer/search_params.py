@@ -59,6 +59,12 @@ def parse_search_params(request) -> dict:
 
     case_sensitive = request.GET.get("case_sensitive", "false").lower() == "true"
 
+    tags_param = request.GET.get("tags", "").strip()
+    tags: List[str] = [t.strip() for t in tags_param.split(",") if t.strip()] if tags_param else []
+    tag_match = request.GET.get("tag_match", "any").strip().lower()
+    if tag_match not in ("any", "all"):
+        tag_match = "any"
+
     return {
         "q": q,
         "directories": directories,
@@ -69,4 +75,6 @@ def parse_search_params(request) -> dict:
         "allowed_extensions": allowed_extensions,
         "search_mode": search_mode,
         "case_sensitive": case_sensitive,
+        "tags": tags,
+        "tag_match": tag_match,
     }

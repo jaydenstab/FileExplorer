@@ -1,8 +1,9 @@
 Django>=5.2,<6.0
 PyMuPDF>=1.23.0
-# ML stack: exact pins for Python 3.13 + avoid meta-tensor (reranker use_fp16=False, devices="cpu")
+# ML stack: pins tested on Python 3.13; torch is a range so pip can resolve on newer Python
+# (e.g. 3.14) where older torch wheels are not published—use reranker on CPU (use_fp16=False).
 transformers==4.47.0
-torch==2.6.0
+torch>=2.6.0,<2.12
 accelerate==0.32.0
 sentence-transformers==2.7.0
 # FlagEmbedding pulls peft; unbounded peft (e.g. 0.18+) breaks transformers==4.47.0 at import time.

@@ -7,6 +7,7 @@ from django.views.decorators.http import require_GET
 from semantic_index.search import RerankerError
 
 from .search_execution import (
+    apply_plain_text_tag_filter,
     apply_semantic_result_filters,
     confidence_for_plain_text,
     confidence_for_semantic,
@@ -43,6 +44,8 @@ def api_search(request):
     Query parameters (existing):
     - q, k, page, page_size, dir, dirs, include_scores,
       distance_threshold, use_reranker, min_confidence, file_types
+    - tags (optional): comma-separated tag names; limits results to tagged paths
+    - tag_match (optional): any | all (default any)
 
     Plain-text mode (no Chroma / reranker):
     - search_mode=text — substring search over file contents (default: semantic).
@@ -61,6 +64,8 @@ def api_search(request):
     allowed_extensions = params["allowed_extensions"]
     search_mode = params["search_mode"]
     case_sensitive = params["case_sensitive"]
+    tags = params["tags"]
+    tag_match = params["tag_match"]
 
     if not q:
         return JsonResponse({"error": "missing 'q' parameter"}, status=400)
@@ -96,6 +101,9 @@ def api_search(request):
                 allowed_extensions=allowed_extensions,
                 case_sensitive=case_sensitive,
             )
+            raw = apply_plain_text_tag_filter(
+                raw, include_scores=include_scores, tags=tags, tag_match=tag_match
+            )
             q_conf_score, q_conf_level = confidence_for_plain_text()
             all_results = finalize_plain_text_results(raw, include_scores=include_scores)
         else:
@@ -116,6 +124,8 @@ def api_search(request):
                 min_confidence_threshold=min_confidence_threshold,
                 allowed_extensions=allowed_extensions,
                 distance_threshold=distance_threshold,
+                tags=tags,
+                tag_match=tag_match,
             )
 
         start = (page - 1) * page_size
@@ -149,6 +159,9 @@ def api_search(request):
             allowed_extensions=allowed_extensions,
             case_sensitive=case_sensitive,
         )
+        raw = apply_plain_text_tag_filter(
+            raw, include_scores=include_scores, tags=tags, tag_match=tag_match
+        )
         q_conf_score, q_conf_level = confidence_for_plain_text()
         results = finalize_plain_text_results(raw, include_scores=include_scores)
     else:
@@ -167,6 +180,8 @@ def api_search(request):
             min_confidence_threshold=min_confidence_threshold,
             allowed_extensions=allowed_extensions,
             distance_threshold=distance_threshold,
+            tags=tags,
+            tag_match=tag_match,
         )
 
     return _json_base(

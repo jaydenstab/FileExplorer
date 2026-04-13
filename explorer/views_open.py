@@ -11,7 +11,8 @@ import fitz  # PyMuPDF
 
 # Configuration - allowed document directories
 BASE_DIR = Path(__file__).resolve().parents[1]
-ALLOWED_DIRECTORIES = ["documents1", "documents2"]
+_FILE_LIB = os.getenv("FILE_LIBRARY_DIR", "indexed_files").strip() or "indexed_files"
+ALLOWED_DIRECTORIES = ["documents1", "documents2", _FILE_LIB]
 MAX_PREVIEW_SIZE = 5 * 1024 * 1024  # 5MB max for preview
 
 

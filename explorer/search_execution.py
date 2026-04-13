@@ -15,6 +15,7 @@ from .search_filters import (
     compute_confidence,
     results_to_paths,
 )
+from .tag_service import filter_results_by_tags
 
 
 def semantic_search_raw(
@@ -42,12 +43,16 @@ def apply_semantic_result_filters(
     min_confidence_threshold: Optional[float],
     allowed_extensions: Optional[Set[str]],
     distance_threshold: Optional[float],
+    tags: Optional[List[str]] = None,
+    tag_match: str = "any",
 ) -> List[Any]:
     out = list(raw)
     if use_reranker and min_confidence_threshold is not None:
         out = apply_min_confidence(out, min_confidence_threshold)
     if allowed_extensions is not None:
         out = apply_file_types(out, allowed_extensions)
+    if tags:
+        out = filter_results_by_tags(out, tags, match=tag_match)
     if distance_threshold is not None:
         out = apply_distance_threshold(out, distance_threshold, include_scores)
     elif not include_scores:
@@ -79,6 +84,18 @@ def finalize_plain_text_results(raw: List[Any], *, include_scores: bool) -> List
     if not include_scores:
         return results_to_paths(raw)
     return raw
+
+
+def apply_plain_text_tag_filter(
+    raw: List[Any],
+    *,
+    include_scores: bool,
+    tags: Optional[List[str]] = None,
+    tag_match: str = "any",
+) -> List[Any]:
+    if not tags:
+        return raw
+    return filter_results_by_tags(raw, tags, match=tag_match)
 
 
 def confidence_for_semantic(raw: List[Any]) -> Tuple[Optional[float], Optional[str]]:

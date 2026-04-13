@@ -32,6 +32,11 @@ SUPPORTED_EXTS = {".pdf", ".txt"}
 # want to chunk because it's easier to search for chunks than the entire file
 # overlap to preserve context at boundaries
 
+
+def get_supported_exts() -> set[str]:
+    """Extensions the indexer can read (shared with upload/import validation)."""
+    return set(SUPPORTED_EXTS)
+
 @lru_cache(maxsize=1)
 def _get_model() -> SentenceTransformer:
     """
