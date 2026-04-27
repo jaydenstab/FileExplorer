@@ -18,5 +18,4 @@
 - Bucket list: index webpages and images? --> add a mechanism to the backend
   that lets people filter down on what types of files are in their index
 - Try multi-modal CLIP again (the example one didnt work but maybe it still works)
-- Add a way to pick which files or import files, doesn't make sense to not be able to select files
-- Add ability to tag files (if calc 3 then make an option to add a flag that says "calc 3")
+- Run on downloads folder and see if it works / breaks (reranker too) 
