@@ -9,3 +9,4 @@ db.sqlite3
 
 # Frontend build output
 frontend/dist/
+frontend/test-results/
