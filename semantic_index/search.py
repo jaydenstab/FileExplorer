@@ -1,10 +1,45 @@
 """
 Semantic search module - queries the vector database to find files matching a search query.
 """
+from __future__ import annotations
+
+import os
+import threading
 from typing import List, Dict, Optional, Tuple
+
 import chromadb
+
 from .indexer import CHROMA_DIR, get_model
 from .reranker import rerank_files, RerankerError
+
+# Max chunk rows returned per Chroma query per collection (reranker path uses k*3 capped by this).
+_DEFAULT_CHROMA_MAX_N_RESULTS = 50
+
+
+def _chrom_max_n_results() -> int:
+    """Read from env each call so tests can override without reloading the module."""
+    return max(1, int(os.environ.get("CHROMA_MAX_N_RESULTS", str(_DEFAULT_CHROMA_MAX_N_RESULTS))))
+
+
+_chroma_client: chromadb.PersistentClient | None = None
+_chroma_client_init_lock = threading.Lock()
+
+
+def _get_chroma_client() -> chromadb.PersistentClient:
+    """
+    Reuse one PersistentClient per process (connection + sqlite metadata are expensive).
+
+    Initialization is guarded by a lock so multi-threaded workers do not race the first
+    ``PersistentClient`` construction.
+    """
+    global _chroma_client
+    c = _chroma_client
+    if c is not None:
+        return c
+    with _chroma_client_init_lock:
+        if _chroma_client is None:
+            _chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        return _chroma_client
 
 
 def _dedupe_preserve_order(items: List[str]) -> List[str]: # Not used
@@ -139,8 +174,7 @@ def search_files(
     if not query or k <= 0:
         return []
     
-    # Connect to ChromaDB
-    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    client = _get_chroma_client()
     
     # Convert query to embedding vector (do this once, reuse for all directories)
     # Use normalized embeddings to match how documents were indexed, so that
@@ -169,7 +203,8 @@ def search_files(
             include_list.append("documents")
         
         # Fetch more results if using reranker (we'll rerank and then limit to k)
-        n_results = min(k * 3, 50) if use_reranker else k
+        cap = _chrom_max_n_results()
+        n_results = min(k * 3, cap) if use_reranker else min(k, cap)
         res = collection.query(
             query_embeddings=q_emb,
             n_results=n_results,

@@ -21,6 +21,8 @@ interface UseExplorerFeedbackParams {
     statusContribution: StatusState | null;
     openSuccess: boolean;
     openFileMutation: { error: unknown };
+    /** Preview query failures and load timeout from usePreviewPanel */
+    previewLoadError: string | null;
   };
 }
 
@@ -68,6 +70,7 @@ export function useExplorerFeedback({
   const errorMessage =
     reindex.localError ||
     (search.searchError instanceof Error ? search.searchError.message : null) ||
+    preview.previewLoadError ||
     (preview.openFileMutation.error instanceof Error
       ? preview.openFileMutation.error.message
       : null) ||
@@ -83,7 +86,8 @@ export function useExplorerFeedback({
     !search.isSearching &&
     search.debouncedQuery.trim() &&
     search.searchResults.length === 0 &&
-    !search.searchError;
+    !search.searchError &&
+    !preview.previewLoadError;
 
   return {
     status,

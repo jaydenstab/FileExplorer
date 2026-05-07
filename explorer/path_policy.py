@@ -20,10 +20,9 @@ def normalize_directory(directory: str) -> str:
     value = (directory or "").strip()
     if not value:
         raise ValueError("directory name cannot be empty")
-    if value not in allowed_search_directories():
-        raise ValueError(
-            f"directory must be one of: {', '.join(allowed_search_directories())}"
-        )
+    roots = allowed_search_directories()
+    if value not in roots:
+        raise ValueError(f"directory must be one of: {', '.join(roots)}")
     return value
 
 

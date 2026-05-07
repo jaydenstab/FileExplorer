@@ -159,6 +159,7 @@ export function PreviewPanel({
 
           <div
             ref={textViewportRef}
+            data-testid="preview-scroll-root"
             className="flex-1 overflow-auto p-4 min-h-0 overscroll-contain [contain:paint]"
             tabIndex={0}
             title="Cmd/Ctrl + scroll to zoom. Use - + buttons or Cmd/Ctrl +/- to zoom."

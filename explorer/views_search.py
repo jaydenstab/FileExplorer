@@ -1,7 +1,6 @@
 """
 Search API views - semantic (vector DB + reranker) or plain-text (substring) mode.
 """
-from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from semantic_index.search import RerankerError

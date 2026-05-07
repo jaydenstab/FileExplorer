@@ -44,6 +44,8 @@ export function ExplorerContent({ controller }: ExplorerContentProps) {
         <AdvancedSearchPanel
           expanded={filters.advancedExpanded}
           onToggle={() => filters.setAdvancedExpanded((p) => !p)}
+          searchMode={filters.searchMode}
+          onSearchModeChange={filters.setSearchMode}
           minConfidence={filters.minConfidence}
           onMinConfidenceChange={filters.setMinConfidence}
           distanceThreshold={filters.distanceThreshold}

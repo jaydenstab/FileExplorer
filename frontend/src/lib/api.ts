@@ -14,9 +14,17 @@ const parseJsonSafe = async (response: Response) => {
 
 const errorFromResponse = async (response: Response, fallback: string) => {
   const body = await parseJsonSafe(response);
+  let nestedCode: string | undefined;
   const nestedMessage =
     typeof body === 'object' && body !== null
-      ? (body as { error?: { message?: string }; error_message?: string }).error?.message ??
+      ? (() => {
+          const err = (body as { error?: { message?: string; code?: string } }).error;
+          if (typeof err === 'object' && err !== null) {
+            nestedCode = typeof err.code === 'string' ? err.code : undefined;
+            return err.message;
+          }
+          return undefined;
+        })() ??
         (body as { error_message?: string }).error_message
       : undefined;
   const rawMessage =
@@ -37,7 +45,8 @@ const errorFromResponse = async (response: Response, fallback: string) => {
     504: 'Gateway timed out.',
   };
   const hint = statusHint[response.status];
-  const message = hint ? `${rawMessage} ${hint}` : rawMessage;
+  const codeSuffix = nestedCode ? ` [${nestedCode}]` : '';
+  const message = (hint ? `${rawMessage} ${hint}` : rawMessage) + codeSuffix;
   throw new Error(message);
 };
 
@@ -51,6 +60,8 @@ export interface SearchResultItem {
 export interface SearchResponse {
   query: string;
   directories: string[];
+  /** Matches backend search_mode (semantic vs plain text). */
+  search_mode?: 'semantic' | 'text';
   page: number;
   page_size: number;
   has_next: boolean;
@@ -65,6 +76,8 @@ export interface SearchOptions {
   minConfidence?: 'high' | 'medium' | 'low';
   useReranker?: boolean;
   fileTypes?: string[];
+  /** Backend `search_mode`: semantic (embeddings) vs text (substring). */
+  searchMode?: 'semantic' | 'text';
 }
 
 /** Text file preview - content is the file text */
@@ -76,16 +89,51 @@ export interface TextPreview {
   size?: number;
 }
 
-/** PDF preview - use pdfUrl for embedding; content is legacy and unused */
+/** PDF preview - use pdfUrl for embedding; content is empty from API (client uses pdf.js). */
 export interface PdfPreview {
   type: 'pdf';
   name: string;
   path: string;
+  content?: string;
   pages?: number;
   preview_pages?: number;
 }
 
 export type PreviewData = TextPreview | PdfPreview;
+
+export interface OpenOsSuccess {
+  success: boolean;
+  message: string;
+  path: string;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+function isOpenOsSuccess(data: unknown): data is OpenOsSuccess {
+  if (!isRecord(data)) return false;
+  return (
+    data.success === true &&
+    typeof data.message === 'string' &&
+    typeof data.path === 'string'
+  );
+}
+
+function isPreviewData(data: unknown): data is PreviewData {
+  if (!isRecord(data)) return false;
+  if (data.type === 'text') {
+    return (
+      typeof data.content === 'string' &&
+      typeof data.name === 'string' &&
+      typeof data.path === 'string'
+    );
+  }
+  if (data.type === 'pdf') {
+    return typeof data.name === 'string' && typeof data.path === 'string';
+  }
+  return false;
+}
 
 /** URL for embedding a PDF in iframe/object/embed */
 export function getPdfEmbedUrl(path: string): string {
@@ -136,6 +184,9 @@ export const searchFiles = async (
   });
 
   if (options) {
+    if (options.searchMode) {
+      params.set('search_mode', options.searchMode);
+    }
     if (options.distanceThreshold != null && options.distanceThreshold >= 0) {
       params.set('distance_threshold', options.distanceThreshold.toString());
     }
@@ -206,11 +257,21 @@ export const getReindexStatus = async (jobId: string): Promise<ReindexStatusResp
  * @param mode - "preview" to return content, "open_os" to open with OS app
  * @param signal - Optional AbortSignal for request cancellation
  */
-export const openFile = async (
+export async function openFile(
+  path: string,
+  mode: 'preview',
+  signal?: AbortSignal
+): Promise<PreviewData>;
+export async function openFile(
+  path: string,
+  mode: 'open_os',
+  signal?: AbortSignal
+): Promise<OpenOsSuccess>;
+export async function openFile(
   path: string,
   mode: 'preview' | 'open_os',
   signal?: AbortSignal
-): Promise<PreviewData | { success: boolean; message: string; path: string }> => {
+): Promise<PreviewData | OpenOsSuccess> {
   const response = await fetch(
     `${API_BASE_URL}/open?path=${encodeURIComponent(path)}&mode=${mode}`,
     { signal }
@@ -220,15 +281,22 @@ export const openFile = async (
     await errorFromResponse(response, 'Failed to open file');
   }
 
-  return response.json();
-};
+  const data: unknown = await response.json();
+  if (mode === 'open_os') {
+    if (!isOpenOsSuccess(data)) {
+      throw new Error('Unexpected response from server when opening file with the system app.');
+    }
+    return data;
+  }
+  if (!isPreviewData(data)) {
+    throw new Error('Unexpected response from server when loading preview.');
+  }
+  return data;
+}
 
-export const openPreview = async (path: string, signal?: AbortSignal): Promise<PreviewData> =>
-  openFile(path, 'preview', signal) as Promise<PreviewData>;
+export const openPreview = (path: string, signal?: AbortSignal): Promise<PreviewData> =>
+  openFile(path, 'preview', signal);
 
-export const openWithSystem = async (
-  path: string,
-  signal?: AbortSignal
-): Promise<{ success: boolean; message: string; path: string }> =>
-  openFile(path, 'open_os', signal) as Promise<{ success: boolean; message: string; path: string }>;
+export const openWithSystem = (path: string, signal?: AbortSignal): Promise<OpenOsSuccess> =>
+  openFile(path, 'open_os', signal);
 

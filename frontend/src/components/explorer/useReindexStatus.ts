@@ -88,7 +88,10 @@ export function useReindexStatus({
         completeTimeoutRef.current = null;
       }, 3000);
 
-      queryClient.invalidateQueries({ queryKey: ['search'] });
+      // Invalidate every search query (keys are ['search', q, dirs, ...]); prefix match.
+      queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'search',
+      });
 
       if (statusTimeoutRef.current) window.clearTimeout(statusTimeoutRef.current);
       statusTimeoutRef.current = window.setTimeout(() => {

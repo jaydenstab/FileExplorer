@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { pdfjsLib } from '../../lib/pdfWorker';
+import { getPdfJsLib } from '../../lib/pdfWorker';
 import { getPdfEmbedUrl } from '../../lib/api';
 
 export interface UsePdfDocumentResult {
@@ -20,36 +20,46 @@ export function usePdfDocument(path: string, onReset: () => void): UsePdfDocumen
   const [loading, setLoading] = useState(true);
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const currentPathRef = useRef<string | null>(null);
+  const loadingTaskRef = useRef<{ destroy?: () => void } | null>(null);
 
   useEffect(() => {
     if (currentPathRef.current === path && pdfDocRef.current) return;
     currentPathRef.current = path;
     pdfDocRef.current = null;
+    loadingTaskRef.current = null;
     setLoading(true);
     setError(null);
     setNumPages(0);
     onReset();
 
-    const loadingTask = pdfjsLib.getDocument({ url: getPdfEmbedUrl(path) });
-    loadingTask.promise
-      .then((pdfDoc) => {
-        if (currentPathRef.current !== path) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const pdfjsLib = await getPdfJsLib();
+        if (cancelled || currentPathRef.current !== path) return;
+        const lt = pdfjsLib.getDocument({ url: getPdfEmbedUrl(path) });
+        loadingTaskRef.current = lt;
+        const pdfDoc = await lt.promise;
+        if (cancelled || currentPathRef.current !== path) return;
         pdfDocRef.current = pdfDoc;
         setNumPages(pdfDoc.numPages);
         setLoading(false);
-      })
-      .catch((err) => {
-        if (currentPathRef.current !== path) return;
+      } catch (err) {
+        if (cancelled || currentPathRef.current !== path) return;
         const msg = err instanceof Error ? err.message : 'Failed to load PDF';
         const fallback = /worker|loading/i.test(msg)
           ? 'PDF worker failed to load. Try refreshing the page.'
           : msg;
         setError(fallback);
         setLoading(false);
-      });
+      }
+    })();
 
     return () => {
-      loadingTask.destroy?.();
+      cancelled = true;
+      loadingTaskRef.current?.destroy?.();
+      loadingTaskRef.current = null;
       currentPathRef.current = null;
       pdfDocRef.current = null;
     };

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useReducer, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { openPreview, openWithSystem, type PreviewData } from '../../lib/api';
+import { openPreview, openWithSystem, type OpenOsSuccess, type PreviewData } from '../../lib/api';
 import type { FileItem } from './types';
 import { toApiPath } from './types';
 import type { StatusState } from '../StatusBar';
@@ -49,9 +49,7 @@ interface UsePreviewPanelResult {
   openPathWithSystem: (path: string) => void;
   closePreview: () => void;
   /** Open-OS mutation for error display in feedback; not used for preview loading */
-  openFileMutation: ReturnType<
-    typeof useMutation<{ success: boolean; message: string; path: string }, Error, string>
-  >;
+  openFileMutation: ReturnType<typeof useMutation<OpenOsSuccess, Error, string>>;
   /** Status to show in StatusBar when loading preview/open; null when idle */
   statusContribution: StatusState | null;
   /** True when open_os just completed; parent uses for success toast, clears after 2s */

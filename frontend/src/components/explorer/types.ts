@@ -52,12 +52,14 @@ export function formatRelevanceScore(score: number): string {
 
 /** Builds a stable key for filter options used in search query keys. */
 export function buildSearchOptionsKey(params: {
+  searchMode: 'semantic' | 'text';
   minConfidence: '' | 'high' | 'medium' | 'low';
   distanceThreshold: string;
   useReranker: boolean;
   selectedFileTypes: string[];
 }): string {
   return JSON.stringify({
+    sm: params.searchMode,
     mc: params.minConfidence,
     dt: params.distanceThreshold,
     ur: params.useReranker,
@@ -102,14 +104,23 @@ export function formatDirectoriesText(selectedDirectories: string[]): string {
 }
 
 export function getActiveFiltersSummary(params: {
+  searchMode: 'semantic' | 'text';
   minConfidence: '' | 'high' | 'medium' | 'low';
   distanceThreshold: string;
   isDistanceInvalid: boolean;
   useReranker: boolean;
   selectedFileTypes: string[];
 }): string | null {
-  const { minConfidence, distanceThreshold, isDistanceInvalid, useReranker, selectedFileTypes } = params;
+  const {
+    searchMode,
+    minConfidence,
+    distanceThreshold,
+    isDistanceInvalid,
+    useReranker,
+    selectedFileTypes,
+  } = params;
   const parts: string[] = [];
+  if (searchMode === 'text') parts.push('Literal text search');
   if (minConfidence) parts.push(`Min relevance: ${minConfidence}`);
   if (distanceThreshold && !isDistanceInvalid) parts.push(`Distance ≤ ${distanceThreshold}`);
   if (!useReranker) parts.push('No reranker');

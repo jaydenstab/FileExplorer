@@ -4,6 +4,8 @@ import { DISTANCE_MIN, DISTANCE_MAX } from './types';
 interface AdvancedSearchPanelProps {
   expanded: boolean;
   onToggle: () => void;
+  searchMode: 'semantic' | 'text';
+  onSearchModeChange: (mode: 'semantic' | 'text') => void;
   minConfidence: '' | 'high' | 'medium' | 'low';
   onMinConfidenceChange: (value: '' | 'high' | 'medium' | 'low') => void;
   distanceThreshold: string;
@@ -19,6 +21,8 @@ interface AdvancedSearchPanelProps {
 export function AdvancedSearchPanel({
   expanded,
   onToggle,
+  searchMode,
+  onSearchModeChange,
   minConfidence,
   onMinConfidenceChange,
   distanceThreshold,
@@ -46,8 +50,38 @@ export function AdvancedSearchPanel({
       </button>
       {expanded && (
         <div className="mt-4 p-4 bg-[var(--color-card)] border border-[var(--color-border)] rounded-lg space-y-4">
+          <div>
+            <span className="block text-xs font-medium text-[var(--color-foreground)]/60 mb-2">
+              Search mode
+            </span>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]/80 cursor-pointer">
+                <input
+                  type="radio"
+                  name="search-mode"
+                  checked={searchMode === 'semantic'}
+                  onChange={() => onSearchModeChange('semantic')}
+                  className="rounded border-[var(--color-border)]"
+                />
+                Semantic (embeddings)
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]/80 cursor-pointer">
+                <input
+                  type="radio"
+                  name="search-mode"
+                  checked={searchMode === 'text'}
+                  onChange={() => onSearchModeChange('text')}
+                  className="rounded border-[var(--color-border)]"
+                />
+                Literal text (substring)
+              </label>
+            </div>
+            <p className="text-xs text-[var(--color-foreground)]/50 mt-2">
+              Literal mode scans file contents for exact substrings (bounded I/O per file). Semantic mode uses the vector index.
+            </p>
+          </div>
           <p className="text-xs text-[var(--color-foreground)]/50">
-            Min relevance: reranker match score (when Use reranker is on); higher = better. Max distance: embedding distance (lower = better); valid range 0–2.
+            Min relevance: reranker match score (when Use reranker is on); higher = better. Max distance: embedding distance (lower = better); valid range 0–2. Ignored in literal text mode.
           </p>
           <div className="flex flex-wrap gap-4 items-end">
             <div>
@@ -57,7 +91,7 @@ export function AdvancedSearchPanel({
               <select
                 value={minConfidence}
                 onChange={(e) => onMinConfidenceChange((e.target.value || '') as '' | 'high' | 'medium' | 'low')}
-                disabled={!useReranker}
+                disabled={!useReranker || searchMode === 'text'}
                 className="px-3 py-2 bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-foreground)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="">Any</option>
@@ -81,7 +115,8 @@ export function AdvancedSearchPanel({
                 value={distanceThreshold}
                 onChange={(e) => onDistanceThresholdChange(e.target.value)}
                 placeholder="0–2"
-                className={`w-24 px-3 py-2 bg-[var(--color-background)] border rounded-lg text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-foreground)]/40 ${
+                disabled={searchMode === 'text'}
+                className={`w-24 px-3 py-2 bg-[var(--color-background)] border rounded-lg text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-foreground)]/40 disabled:opacity-50 ${
                   isDistanceInvalid ? 'border-[var(--color-error)]' : 'border-[var(--color-border)]'
                 }`}
               />
@@ -95,6 +130,7 @@ export function AdvancedSearchPanel({
                 id="use-reranker"
                 checked={useReranker}
                 onChange={(e) => onUseRerankerChange(e.target.checked)}
+                disabled={searchMode === 'text'}
                 className="rounded border-[var(--color-border)]"
               />
               <label htmlFor="use-reranker" className="text-sm text-[var(--color-foreground)]/80">

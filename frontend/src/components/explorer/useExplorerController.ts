@@ -5,19 +5,14 @@ import { useExplorerSearch } from './useExplorerSearch';
 import { useReindexStatus } from './useReindexStatus';
 import { usePreviewPanel } from './usePreviewPanel';
 import { useExplorerFeedback } from './useExplorerFeedback';
-import {
-  buildExplorerFeedback,
-  buildExplorerFilters,
-  buildExplorerPreview,
-  buildExplorerReindex,
-  buildExplorerSearch,
-} from './explorerViewModels';
 
 export interface ExplorerFilters {
   searchQuery: string;
   handleSearch: (query: string) => void;
   selectedDirectories: string[];
   handleDirectoryToggle: (directory: string) => void;
+  searchMode: 'semantic' | 'text';
+  setSearchMode: (v: 'semantic' | 'text') => void;
   minConfidence: '' | 'high' | 'medium' | 'low';
   setMinConfidence: (v: '' | 'high' | 'medium' | 'low') => void;
   distanceThreshold: string;
@@ -84,6 +79,8 @@ export function useExplorerController(): UseExplorerControllerResult {
     handleSearch,
     selectedDirectories,
     handleDirectoryToggle,
+    searchMode,
+    setSearchMode,
     minConfidence,
     setMinConfidence,
     distanceThreshold,
@@ -140,16 +137,18 @@ export function useExplorerController(): UseExplorerControllerResult {
       statusContribution: preview.statusContribution,
       openSuccess: preview.openSuccess,
       openFileMutation: preview.openFileMutation,
+      previewLoadError: preview.previewError,
     },
   });
 
   const filters = useMemo(
-    (): ExplorerFilters =>
-      buildExplorerFilters({
+    (): ExplorerFilters => ({
       searchQuery,
       handleSearch,
       selectedDirectories,
       handleDirectoryToggle,
+      searchMode,
+      setSearchMode,
       minConfidence,
       setMinConfidence,
       distanceThreshold,
@@ -170,6 +169,8 @@ export function useExplorerController(): UseExplorerControllerResult {
       handleSearch,
       selectedDirectories,
       handleDirectoryToggle,
+      searchMode,
+      setSearchMode,
       minConfidence,
       setMinConfidence,
       distanceThreshold,
@@ -188,8 +189,7 @@ export function useExplorerController(): UseExplorerControllerResult {
   );
 
   const searchGroup = useMemo(
-    (): ExplorerSearch =>
-      buildExplorerSearch({
+    (): ExplorerSearch => ({
       searchResults: search.searchResults,
       hasNext: search.hasNext,
       isSearching: search.isSearching,
@@ -210,8 +210,7 @@ export function useExplorerController(): UseExplorerControllerResult {
   );
 
   const reindexGroup = useMemo(
-    (): ExplorerReindex =>
-      buildExplorerReindex({
+    (): ExplorerReindex => ({
       startReindexMutation: reindex.startReindexMutation,
       reindexStatus: reindex.reindexStatus,
       handleReindex: reindex.handleReindex,
@@ -220,8 +219,7 @@ export function useExplorerController(): UseExplorerControllerResult {
   );
 
   const previewGroup = useMemo(
-    (): ExplorerPreview =>
-      buildExplorerPreview({
+    (): ExplorerPreview => ({
       previewData: preview.previewData,
       previewError: preview.previewError,
       previewErrorPath: preview.previewErrorPath,
@@ -244,8 +242,7 @@ export function useExplorerController(): UseExplorerControllerResult {
   );
 
   const feedbackGroup = useMemo(
-    (): ExplorerFeedback =>
-      buildExplorerFeedback({
+    (): ExplorerFeedback => ({
       status: feedback.status,
       reindexShowSuccess: feedback.reindexShowSuccess,
       errorMessage: feedback.errorMessage,

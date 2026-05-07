@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { searchFiles, openPreview, type SearchResponse, type SearchOptions, type SearchResultItem, type PreviewData } from '../../lib/api';
+import { searchFiles, openPreview, type SearchResponse, type SearchOptions, type SearchResultItem } from '../../lib/api';
 import type { FileItem, SearchView } from './types';
 import { resultToFileItem, buildSearchDescriptor } from './types';
 
@@ -57,6 +57,11 @@ export function useExplorerSearch({
     [debouncedQuery, selectedDirectories, searchOptionsKey, currentPage, pageSize]
   );
 
+  const searchStaleTime = useMemo(
+    () => (searchOptions.searchMode === 'text' ? 60_000 : 300_000),
+    [searchOptions.searchMode]
+  );
+
   const {
     data: searchView,
     isFetching: isSearching,
@@ -67,7 +72,7 @@ export function useExplorerSearch({
       searchFiles(debouncedQuery, selectedDirectories, currentPage, pageSize, searchOptions, signal),
     enabled: !!debouncedQuery.trim(),
     placeholderData: keepPreviousData,
-    staleTime: 300_000,
+    staleTime: searchStaleTime,
     gcTime: 120_000,
     select: (data) => ({
       items: data.results.map((raw, index) => resultToFileItem(raw as string | SearchResultItem, index)),
@@ -96,10 +101,20 @@ export function useExplorerSearch({
       queryKey: nextDescriptor.queryKey,
       queryFn: ({ signal }) =>
         searchFiles(debouncedQuery, selectedDirectories, currentPage + 1, pageSize, searchOptions, signal),
-      staleTime: 300_000,
+      staleTime: searchStaleTime,
       gcTime: 120_000,
     });
-  }, [debouncedQuery, selectedDirectories, searchOptionsKey, searchOptions, currentPage, pageSize, hasNext, queryClient]);
+  }, [
+    debouncedQuery,
+    selectedDirectories,
+    searchOptionsKey,
+    searchOptions,
+    currentPage,
+    pageSize,
+    hasNext,
+    queryClient,
+    searchStaleTime,
+  ]);
 
   const totalResults = useMemo(() => {
     if (!searchView) return 0;
@@ -128,7 +143,7 @@ export function useExplorerSearch({
         prefetchTimeoutRef.current = null;
         queryClient.prefetchQuery({
           queryKey: ['preview', path],
-          queryFn: ({ signal }) => openPreview(path, signal) as Promise<PreviewData>,
+          queryFn: ({ signal }) => openPreview(path, signal),
           staleTime: 30_000,
         });
       }, HOVER_PREFETCH_DELAY_MS);

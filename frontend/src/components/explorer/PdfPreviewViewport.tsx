@@ -1,9 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { useVisiblePdfPages } from './useVisiblePdfPages';
 import { usePdfPreviewScale } from './usePdfPreviewScale';
 import { scheduleBatchedIdleWork } from './pdfRenderScheduler';
 import { usePdfDocument } from './usePdfDocument';
 import { usePdfPlaceholderLayout } from './usePdfPlaceholderLayout';
+
+const MAX_CANVAS_DEVICE_PIXEL_RATIO = 2;
+
+function getOrLoadPage(
+  doc: PDFDocumentProxy,
+  cache: Map<number, PDFPageProxy>,
+  pageNum: number
+): Promise<PDFPageProxy> {
+  const hit = cache.get(pageNum);
+  if (hit) return Promise.resolve(hit);
+  return doc.getPage(pageNum).then((p) => {
+    cache.set(pageNum, p);
+    return p;
+  });
+}
 
 interface PdfPreviewViewportProps {
   path: string;
@@ -33,6 +49,7 @@ export function PdfPreviewViewport({
   const failedPageCountRef = useRef(0);
   const retryCountRef = useRef<Map<number, number>>(new Map());
   const premeasureCancelRef = useRef<(() => void) | null>(null);
+  const pageCacheRef = useRef<Map<number, PDFPageProxy>>(new Map());
   const hasFiredFirstPageRef = useRef(false);
   const onFirstPageRenderRef = useRef(onFirstPageRender);
   const renderedPagesRef = useRef<Set<number>>(new Set());
@@ -49,6 +66,7 @@ export function PdfPreviewViewport({
     cancelAllRenderTasks();
     premeasureCancelRef.current?.();
     premeasureCancelRef.current = null;
+    pageCacheRef.current.clear();
     setPageWarning(null);
     failedPageCountRef.current = 0;
     retryCountRef.current.clear();
@@ -94,9 +112,9 @@ export function PdfPreviewViewport({
     if (!pdfDoc || numPages === 0 || !containerRef.current) return;
 
     const toMeasure = Array.from({ length: numPages }, (_, idx) => idx + 1);
+    const cache = pageCacheRef.current;
     const cancel = scheduleBatchedIdleWork(toMeasure, MAX_PREMEASURE_BATCH, (pageNum) => {
-      pdfDoc
-        .getPage(pageNum)
+      getOrLoadPage(pdfDoc, cache, pageNum)
         .then((page) => {
           if (currentPathRef.current !== path) return;
           const viewport = page.getViewport({ scale });
@@ -129,26 +147,36 @@ export function PdfPreviewViewport({
     const placeholders = container.querySelectorAll('[data-pdf-page-index]');
     if (placeholders.length === 0) return;
 
+    const cache = pageCacheRef.current;
     const renderPage = (i: number) => {
       if (renderedPagesRef.current.has(i) || renderTasksRef.current.has(i)) return;
       const placeholder = placeholders[i - 1] as HTMLElement | undefined;
       if (!placeholder) return;
 
-      pdfDoc.getPage(i).then((page) => {
+      getOrLoadPage(pdfDoc, cache, i).then((page) => {
         if (currentPathRef.current !== path) return;
         if (renderedPagesRef.current.has(i)) return;
 
-        const viewport = page.getViewport({ scale });
+        const displayViewport = page.getViewport({ scale });
+        const dprCap = Math.min(
+          typeof globalThis !== 'undefined' && 'devicePixelRatio' in globalThis
+            ? globalThis.devicePixelRatio
+            : 1,
+          MAX_CANVAS_DEVICE_PIXEL_RATIO
+        );
+        const renderViewport = page.getViewport({ scale: scale * dprCap });
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
         // Replace coarse placeholder estimate with exact page height once measured.
         // This removes large visual gaps for PDFs with mixed page sizes.
-        placeholder.style.minHeight = `${viewport.height}px`;
+        placeholder.style.minHeight = `${displayViewport.height}px`;
 
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
+        canvas.width = Math.floor(renderViewport.width);
+        canvas.height = Math.floor(renderViewport.height);
+        canvas.style.width = `${displayViewport.width}px`;
+        canvas.style.height = `${displayViewport.height}px`;
         canvas.style.display = 'block';
         canvas.style.margin = '0 auto';
         canvas.style.border = '1px solid var(--color-border)';
@@ -157,7 +185,7 @@ export function PdfPreviewViewport({
         const renderCtx = {
           canvas,
           canvasContext: ctx,
-          viewport,
+          viewport: renderViewport,
         };
         const renderTask = page.render(renderCtx);
         renderTasksRef.current.set(i, renderTask);

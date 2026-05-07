@@ -21,6 +21,10 @@ interface UseExplorerStateResult {
   selectedDirectories: string[];
   handleDirectoryToggle: (directory: string) => void;
 
+  // Search mode
+  searchMode: 'semantic' | 'text';
+  setSearchMode: (value: 'semantic' | 'text') => void;
+
   // Filters
   minConfidence: '' | 'high' | 'medium' | 'low';
   setMinConfidence: (value: '' | 'high' | 'medium' | 'low') => void;
@@ -58,6 +62,7 @@ export function useExplorerState(): UseExplorerStateResult {
   });
   const [selectedDirectories, setSelectedDirectories] = useState<string[]>([AVAILABLE_DIRECTORIES[0]]);
   const pageSize = DEFAULT_PAGE_SIZE;
+  const [searchMode, setSearchMode] = useState<'semantic' | 'text'>('semantic');
   const [minConfidence, setMinConfidence] = useState<'' | 'high' | 'medium' | 'low'>('');
   const [distanceThreshold, setDistanceThreshold] = useState('');
   const [useReranker, setUseReranker] = useState(true);
@@ -71,8 +76,12 @@ export function useExplorerState(): UseExplorerStateResult {
     setCurrentPage(1);
   }, [debouncedQuery]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchMode]);
+
   const searchOptions = useMemo((): SearchOptions => {
-    const opts: SearchOptions = { useReranker };
+    const opts: SearchOptions = { useReranker, searchMode };
     if (minConfidence) opts.minConfidence = minConfidence;
     const dist = parseFloat(distanceThreshold);
     if (!Number.isNaN(dist) && dist >= DISTANCE_MIN && dist <= DISTANCE_MAX) {
@@ -80,7 +89,7 @@ export function useExplorerState(): UseExplorerStateResult {
     }
     if (selectedFileTypes.length > 0) opts.fileTypes = [...selectedFileTypes].sort();
     return opts;
-  }, [minConfidence, distanceThreshold, useReranker, selectedFileTypes]);
+  }, [minConfidence, distanceThreshold, useReranker, selectedFileTypes, searchMode]);
 
   const distanceNum = parseFloat(distanceThreshold);
   const isDistanceInvalid =
@@ -90,12 +99,13 @@ export function useExplorerState(): UseExplorerStateResult {
   const searchOptionsKey = useMemo(
     () =>
       buildSearchOptionsKey({
+        searchMode,
         minConfidence,
         distanceThreshold,
         useReranker,
         selectedFileTypes,
       }),
-    [minConfidence, distanceThreshold, useReranker, selectedFileTypes]
+    [searchMode, minConfidence, distanceThreshold, useReranker, selectedFileTypes]
   );
 
   // Reset pagination when filters change (skip initial mount)
@@ -109,13 +119,14 @@ export function useExplorerState(): UseExplorerStateResult {
   const activeFiltersSummary = useMemo(
     () =>
       getActiveFiltersSummary({
+        searchMode,
         minConfidence,
         distanceThreshold,
         isDistanceInvalid,
         useReranker,
         selectedFileTypes,
       }),
-    [minConfidence, distanceThreshold, isDistanceInvalid, useReranker, selectedFileTypes]
+    [searchMode, minConfidence, distanceThreshold, isDistanceInvalid, useReranker, selectedFileTypes]
   );
 
   const handleSearch = useCallback((query: string) => {
@@ -137,6 +148,7 @@ export function useExplorerState(): UseExplorerStateResult {
   }, []);
 
   const handleResetFilters = useCallback(() => {
+    setSearchMode('semantic');
     setMinConfidence('');
     setDistanceThreshold('');
     setUseReranker(true);
@@ -150,6 +162,8 @@ export function useExplorerState(): UseExplorerStateResult {
     handleSearch,
     selectedDirectories,
     handleDirectoryToggle,
+    searchMode,
+    setSearchMode,
     minConfidence,
     setMinConfidence,
     distanceThreshold,

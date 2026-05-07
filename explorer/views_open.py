@@ -1,101 +1,118 @@
 """
 File opening API views - handles opening files via OS or returning preview content.
 """
-from django.http import JsonResponse, FileResponse
-from django.views.decorators.http import require_GET
-from django.views.decorators.clickjacking import xframe_options_exempt
+from __future__ import annotations
+
+import logging
+import os
 import subprocess
 import sys
-import os
 import time
-import logging
 from pathlib import Path
-import fitz  # PyMuPDF
+
+from django.http import FileResponse, HttpResponse, HttpResponseNotModified, StreamingHttpResponse
+from django.utils.http import http_date
+from django.views.decorators.clickjacking import xframe_options_exempt
+from django.views.decorators.http import require_GET
+from pypdf import PdfReader
+
 from .api_response import api_error, api_ok
 from .path_policy import ALLOWED_DOCUMENT_DIRECTORIES, resolve_project_relative_path
+from .pdf_http import (
+    content_disposition_inline,
+    file_etag,
+    if_none_match_get_matches,
+    parse_single_byte_range,
+)
 
-# Configuration
-MAX_PREVIEW_SIZE = 5 * 1024 * 1024 
+# Configuration: reject preview if the file on disk exceeds this size.
+MAX_PREVIEW_FILE_BYTES = 5 * 1024 * 1024
+# Max bytes loaded into memory for a text preview (defaults to same cap; tests may patch lower).
+MAX_TEXT_PREVIEW_READ_BYTES = MAX_PREVIEW_FILE_BYTES
 OPEN_OS_TIMEOUT_SECONDS = 8
+API_FILE_MAX_AGE_SECONDS = int(os.environ.get("API_FILE_MAX_AGE_SECONDS", "120"))
 logger = logging.getLogger(__name__)
 
 
 def _read_text_file_preview(path: Path) -> dict:
-    """Read text file and return preview content."""
+    """Read text preview up to MAX_TEXT_PREVIEW_READ_BYTES (no full-file read for huge files)."""
     try:
-        with path.open("r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+        st = path.stat()
+        read_len = min(MAX_TEXT_PREVIEW_READ_BYTES, st.st_size)
+        with path.open("rb") as f:
+            raw = f.read(read_len)
+        content = raw.decode("utf-8", errors="ignore")
         return {
             "type": "text",
             "content": content,
-            "size": len(content.encode("utf-8")),
+            "size": st.st_size,
         }
     except Exception as e:
         return {"error": f"Failed to read file: {str(e)}"}
 
 
 def _read_pdf_preview(path: Path) -> dict:
-    """Extract text from PDF and return preview content."""
+    """Return PDF metadata only (page count via pypdf); client renders via /api/file + pdf.js."""
     try:
-        text = ""
-        with fitz.open(str(path)) as pdf:
-            total_pages = len(pdf)
-            # Limit to first 10 pages for preview
-            for page_num in range(min(10, total_pages)):
-                text += pdf[page_num].get_text()
+        with path.open("rb") as f:
+            reader = PdfReader(f)
+            total_pages = len(reader.pages)
+        preview_pages = min(10, total_pages)
         return {
             "type": "pdf",
-            "content": text,
+            "content": "",
             "pages": total_pages,
-            "preview_pages": min(10, total_pages),
+            "preview_pages": preview_pages,
         }
     except Exception as e:
         return {"error": f"Failed to read PDF: {str(e)}"}
+
+
+def _range_not_satisfiable(file_size: int) -> HttpResponse:
+    r = HttpResponse(status=416, content_type="application/pdf")
+    r["Content-Range"] = f"bytes */{file_size}"
+    r["Accept-Ranges"] = "bytes"
+    return r
 
 
 @require_GET
 def api_open(request):
     """
     Open a file via OS default application or return preview content.
-    
+
     Query parameters:
     - path (required): Relative file path from project root (e.g., "documents1/file.pdf")
     - mode (optional): "preview" to return content, "open_os" to open with OS app (default: "preview")
-    
+
     Returns JSON with file content/metadata for preview mode, or success/error for open_os mode.
     """
     started = time.monotonic()
     file_path = request.GET.get("path", "").strip()
     mode = request.GET.get("mode", "preview").strip().lower()
-    
+
     if not file_path:
         return api_error("missing_path", "missing 'path' parameter", 400)
-    
-    # Validate path is safe
+
     try:
         full_path = resolve_project_relative_path(
             file_path, allowed_roots=ALLOWED_DOCUMENT_DIRECTORIES
         )
     except ValueError:
         return api_error("path_forbidden", "Invalid or unauthorized file path", 403)
-    
-    # Check if file exists
+
     if not full_path.exists() or not full_path.is_file():
         return api_error("file_not_found", "File not found", 404)
-    
-    # Handle preview mode
+
     if mode == "preview":
-        # Check file size
         file_size = full_path.stat().st_size
-        if file_size > MAX_PREVIEW_SIZE:
+        if file_size > MAX_PREVIEW_FILE_BYTES:
             return api_error(
                 "preview_too_large",
-                f"File too large for preview (max {MAX_PREVIEW_SIZE / 1024 / 1024:.1f}MB)",
+                f"File too large for preview (max {MAX_PREVIEW_FILE_BYTES / 1024 / 1024:.1f}MB)",
                 413,
                 details={"size": file_size},
             )
-        
-        # Determine file type and read accordingly
+
         suffix = full_path.suffix.lower()
         if suffix == ".txt":
             result = _read_text_file_preview(full_path)
@@ -103,10 +120,10 @@ def api_open(request):
             result = _read_pdf_preview(full_path)
         else:
             return api_error("unsupported_file_type", f"Unsupported file type: {suffix}", 400)
-        
+
         if "error" in result:
             return api_error("preview_read_failed", result["error"], 500)
-        
+
         result["path"] = file_path
         result["name"] = full_path.name
         response = api_ok(result)
@@ -119,26 +136,25 @@ def api_open(request):
             },
         )
         return response
-    
-    # Handle open_os mode
-    elif mode == "open_os":
+
+    if mode == "open_os":
         try:
-            # Cross-platform file opening
             if sys.platform == "win32":
-                # Windows
                 os.startfile(str(full_path))
             elif sys.platform == "darwin":
-                # macOS
                 subprocess.run(["open", str(full_path)], check=True, timeout=OPEN_OS_TIMEOUT_SECONDS)
             else:
-                # Linux and other Unix-like systems
-                subprocess.run(["xdg-open", str(full_path)], check=True, timeout=OPEN_OS_TIMEOUT_SECONDS)
-            
-            return JsonResponse({
-                "success": True,
-                "message": "File opened successfully",
-                "path": file_path,
-            })
+                subprocess.run(
+                    ["xdg-open", str(full_path)], check=True, timeout=OPEN_OS_TIMEOUT_SECONDS
+                )
+
+            return api_ok(
+                {
+                    "success": True,
+                    "message": "File opened successfully",
+                    "path": file_path,
+                }
+            )
         except subprocess.TimeoutExpired:
             return api_error(
                 "open_timeout",
@@ -160,11 +176,10 @@ def api_open(request):
                 500,
                 details={"path": file_path},
             )
-    
-    else:
-        return api_error(
-            "invalid_mode", f"Invalid mode: {mode}. Use 'preview' or 'open_os'", 400
-        )
+
+    return api_error(
+        "invalid_mode", f"Invalid mode: {mode}. Use 'preview' or 'open_os'", 400
+    )
 
 
 @xframe_options_exempt
@@ -173,6 +188,7 @@ def api_file(request):
     """
     Serve a file for inline embedding (e.g. PDF in iframe).
     Only PDFs are supported. Uses same path validation as api_open.
+    Supports conditional GET (ETag / Last-Modified), Cache-Control, and single-byte Range (206).
     """
     started = time.monotonic()
     file_path = request.GET.get("path", "").strip()
@@ -196,18 +212,92 @@ def api_file(request):
             400,
         )
 
-    response = FileResponse(
-        open(full_path, "rb"),
+    stat = full_path.stat()
+    size = stat.st_size
+    etag = file_etag(stat)
+    mtime = stat.st_mtime
+    cache_control = f"private, max-age={API_FILE_MAX_AGE_SECONDS}"
+
+    if if_none_match_get_matches(request.META.get("HTTP_IF_NONE_MATCH"), etag):
+        r = HttpResponseNotModified()
+        r["ETag"] = etag
+        r["Cache-Control"] = cache_control
+        r["Last-Modified"] = http_date(mtime)
+        r["Accept-Ranges"] = "bytes"
+        logger.info(
+            "api_file",
+            extra={
+                "path": file_path,
+                "http_status": 304,
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+            },
+        )
+        return r
+
+    range_header = (request.META.get("HTTP_RANGE") or "").strip()
+    disposition = content_disposition_inline(full_path.name)
+
+    if range_header.startswith("bytes=") and size > 0:
+        parsed = parse_single_byte_range(range_header, size)
+        if parsed is None:
+            resp416 = _range_not_satisfiable(size)
+            logger.info(
+                "api_file",
+                extra={
+                    "path": file_path,
+                    "http_status": 416,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                },
+            )
+            return resp416
+        start, end = parsed
+        length = end - start + 1
+
+        def byte_iterator():
+            with full_path.open("rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        resp = StreamingHttpResponse(byte_iterator(), status=206, content_type="application/pdf")
+        resp["Content-Range"] = f"bytes {start}-{end}/{size}"
+        resp["Content-Length"] = str(length)
+        resp["Content-Disposition"] = disposition
+        resp["Accept-Ranges"] = "bytes"
+        resp["ETag"] = etag
+        resp["Cache-Control"] = cache_control
+        resp["Last-Modified"] = http_date(mtime)
+        logger.info(
+            "api_file",
+            extra={
+                "path": file_path,
+                "http_status": 206,
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+            },
+        )
+        return resp
+
+    resp = FileResponse(
+        full_path.open("rb"),
         content_type="application/pdf",
         as_attachment=False,
     )
-    response["Content-Disposition"] = "inline; filename=\"" + full_path.name + "\""
+    resp["Content-Disposition"] = disposition
+    resp["Accept-Ranges"] = "bytes"
+    resp["ETag"] = etag
+    resp["Cache-Control"] = cache_control
+    resp["Last-Modified"] = http_date(mtime)
     logger.info(
-        "api_file.success",
+        "api_file",
         extra={
             "path": file_path,
+            "http_status": 200,
             "elapsed_ms": int((time.monotonic() - started) * 1000),
         },
     )
-    return response
-
+    return resp

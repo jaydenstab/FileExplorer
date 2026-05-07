@@ -8,9 +8,11 @@ vi.mock('./useVisiblePdfPages', () => ({
 
 const getDocumentMock = vi.fn();
 vi.mock('../../lib/pdfWorker', () => ({
-  pdfjsLib: {
-    getDocument: (...args: unknown[]) => getDocumentMock(...args),
-  },
+  getPdfJsLib: vi.fn(() =>
+    Promise.resolve({
+      getDocument: (...args: unknown[]) => getDocumentMock(...args),
+    })
+  ),
 }));
 
 describe('PdfPreviewViewport', () => {

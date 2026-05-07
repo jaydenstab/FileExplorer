@@ -211,3 +211,31 @@ The app exposes two different quality signals:
 - Reindexing rebuilds the collection for the target directory from scratch
 - Large files are skipped using a configurable max file size
 - The indexer has a safety limit of 200 files per directory
+
+## CI and local verification
+
+GitHub Actions runs three jobs: **backend** (`python manage.py test explorer`), **frontend** (`npm run verify:repo` in `frontend/`), and **e2e** (Playwright against Django + Vite preview). The backend job is intentionally scoped to the `explorer` app so CI does not pick up ad-hoc root-level test scripts that expect a live server.
+
+To mirror CI locally:
+
+```bash
+pip install -r requirements.txt
+python manage.py test explorer
+cd frontend && npm ci && npm run verify:repo
+```
+
+For the full Playwright flow, start Django and `vite preview`, then from `frontend/` run `CI_E2E=1 npx playwright test` (see `.github/workflows/ci.yml` for URLs and ports).
+
+## Environment tunables
+
+| Variable | Purpose | Notes |
+| --- | --- | --- |
+| `CHROMA_MAX_N_RESULTS` | Max rows returned per Chroma query per collection | Integer ≥ 1; default 50 |
+| `PLAINTEXT_SEARCH_MAX_BYTES_PER_FILE` | Bytes read per `.txt` during substring search | Default 2 MiB; minimum 4096 |
+| `PLAINTEXT_SEARCH_MAX_PDF_PAGES` | PDF pages scanned per file for substring search | Integer ≥ 1; default 10 |
+| `PLAINTEXT_SEARCH_MAX_WORKERS` | Thread pool size for parallel plaintext scans | Integer ≥ 1; default 4 |
+| `API_FILE_MAX_AGE_SECONDS` | `Cache-Control: max-age` for `/api/file` PDF responses | Default 120 |
+| `SEMANTIC_EMBEDDING_MODEL` | Sentence-transformers model id for embeddings | See `semantic_index/indexer.py` |
+| `SEMANTIC_MAX_FILE_SIZE_BYTES` | Skip indexing files larger than this | Default in indexer |
+
+Chroma’s Python client is cached once per process with a lock around first construction; for development, `runserver` is single-threaded by default. For production, prefer a clear worker model (e.g. one worker process per container) if you rely on a single shared Chroma directory.
