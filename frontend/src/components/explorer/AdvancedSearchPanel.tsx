@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { DISTANCE_MIN, DISTANCE_MAX } from './types';
 
-export interface AdvancedSearchPanelProps {
+interface AdvancedSearchPanelProps {
   expanded: boolean;
   onToggle: () => void;
   minConfidence: '' | 'high' | 'medium' | 'low';

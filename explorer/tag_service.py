@@ -1,12 +1,9 @@
 """Tag names and library paths; filter search results by tag."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set, Union
 
-from semantic_index.indexer import BASE_DIR
-
-from .file_store import get_library_dirname, get_library_root
+from .path_policy import validate_library_relative_path
 from .models import Tag, TaggedFile
 
 
@@ -23,27 +20,6 @@ def normalize_tag_names(tags: Iterable[str]) -> List[str]:
             seen.add(n)
             out.append(n)
     return out
-
-
-def validate_library_relative_path(path: str) -> str:
-    raw = (path or "").strip()
-    if not raw:
-        raise ValueError("missing path")
-    p = Path(raw)
-    if p.is_absolute():
-        raise ValueError("path must be project-relative")
-    lib = get_library_dirname()
-    norm = p.as_posix().lstrip("/")
-    if not (norm == lib or norm.startswith(lib + "/")):
-        raise ValueError(f"path must be under {lib}/")
-    full = (BASE_DIR / norm).resolve()
-    lib_root = get_library_root().resolve()
-    if lib_root not in full.parents and full != lib_root:
-        raise ValueError("invalid path")
-    if not full.is_file():
-        raise ValueError("file not found")
-    return norm
-
 
 def _get_or_create_tags(names: Sequence[str]) -> List[Tag]:
     return [Tag.objects.get_or_create(name=n)[0] for n in names]

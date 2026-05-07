@@ -1,10 +1,15 @@
-import { X, ExternalLink, AlertCircle } from 'lucide-react';
+import { useEffect, useRef, useCallback } from 'react';
+import { ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
 import type { PreviewData } from '../../lib/api';
+import { PdfPreviewViewport } from './PdfPreviewViewport';
+import { PreviewHeader } from './PreviewHeader';
+import { usePreviewZoomControls } from './usePreviewZoomControls';
 
-export interface PreviewPanelProps {
+interface PreviewPanelProps {
   previewData: PreviewData | null;
   previewError: string | null;
   previewErrorPath: string | null;
+  isPreviewLoading?: boolean;
   onClose: () => void;
   /** Open file with system app by path (API path, no leading slash). */
   onOpenPath: (path: string) => void;
@@ -14,36 +19,102 @@ export function PreviewPanel({
   previewData,
   previewError,
   previewErrorPath,
+  isPreviewLoading = false,
   onClose,
   onOpenPath,
 }: PreviewPanelProps) {
-  if (!previewData && !previewError) return null;
+  const advancedPdfPreviewEnabled = import.meta.env.VITE_PDF_ADVANCED_PREVIEW !== 'false';
+  const isTextPreview = previewData?.type === 'text';
+  const isPdfPreview = previewData?.type === 'pdf';
+  const currentContentPath =
+    isTextPreview || isPdfPreview ? previewData!.path : null;
+  const hasZoomControls = isTextPreview || isPdfPreview;
+
+  const zoomControls = usePreviewZoomControls({
+    isPdfPreview,
+    hasZoomControls,
+    currentContentPath,
+  });
+
+  const {
+    zoomPercent,
+    wrapLines,
+    setWrapLines,
+    sensitivity,
+    setSensitivity,
+    handleZoomIn,
+    handleZoomOut,
+    handleZoomReset,
+    panelRef,
+    wheelTicksRef,
+  } = zoomControls;
+
+  const textViewportRef = useRef<HTMLDivElement>(null);
+  const hasCenteredForPathRef = useRef<string | null>(null);
+  const prevContentPathRef = useRef<string | null>(null);
+  const currentContentPathRef = useRef(currentContentPath);
+  currentContentPathRef.current = currentContentPath;
+
+  useEffect(() => {
+    if (currentContentPath !== prevContentPathRef.current) {
+      prevContentPathRef.current = currentContentPath;
+      hasCenteredForPathRef.current = null;
+      if (currentContentPath) {
+        const el = textViewportRef.current;
+        if (el) {
+          el.scrollTop = 0;
+          el.scrollLeft = 0;
+        }
+      }
+    }
+  }, [currentContentPath]);
+
+  const centerPdfInitialScroll = useCallback((path: string) => {
+    if (currentContentPathRef.current !== path) return;
+    const el = textViewportRef.current;
+    if (!el) return;
+    if (hasCenteredForPathRef.current === path) return;
+    hasCenteredForPathRef.current = path;
+    requestAnimationFrame(() => {
+      if (currentContentPathRef.current !== path) return;
+      const scrollEl = textViewportRef.current;
+      if (!scrollEl) return;
+      const { scrollWidth, scrollHeight, clientWidth, clientHeight } = scrollEl;
+      const scrollLeft = Math.max(0, (scrollWidth - clientWidth) / 2);
+      const scrollTop =
+        scrollHeight <= clientHeight
+          ? Math.max(0, (scrollHeight - clientHeight) / 2)
+          : 0;
+      scrollEl.scrollLeft = scrollLeft;
+      scrollEl.scrollTop = scrollTop;
+    });
+  }, []);
+
+  if (!previewData && !previewError && !isPreviewLoading) return null;
 
   return (
-    <div className="flex-[0_0_40%] min-w-[400px] max-w-[600px] border-l border-[var(--color-border)] bg-[var(--color-background)] flex flex-col overflow-hidden transition-transform duration-300 ease-in-out">
-      {previewError ? (
+    <aside
+      ref={panelRef}
+      className="w-full h-full flex flex-col overflow-hidden border-l-2 border-[var(--color-border)] bg-[var(--color-muted)]/40"
+      role="complementary"
+      aria-label="File preview"
+      {...(import.meta.env.DEV && { 'data-debug-wheel-ticks': String(wheelTicksRef.current) })}
+    >
+      {isPreviewLoading && !previewData && !previewError ? (
         <>
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] flex-shrink-0 bg-[var(--color-background)] sticky top-0 z-10">
-            <div className="flex-1 min-w-0 pr-4">
-              <h2 className="text-lg font-semibold text-[var(--color-error)] truncate">
-                Preview Error
-              </h2>
-              {previewErrorPath && (
-                <p className="text-sm text-[var(--color-foreground)]/60 truncate font-mono mt-1">
-                  {previewErrorPath}
-                </p>
-              )}
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 text-[var(--color-foreground)]/60 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors flex-shrink-0"
-              title="Close preview"
-            >
-              <X className="w-5 h-5" />
-            </button>
+          <PreviewHeader variant="loading" onClose={onClose} />
+          <div className="flex-1 flex items-center justify-center min-h-0">
+            <Loader2 className="w-8 h-8 text-[var(--color-primary)] animate-spin" />
           </div>
-
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center">
+        </>
+      ) : previewError ? (
+        <>
+          <PreviewHeader
+            variant="error"
+            previewErrorPath={previewErrorPath}
+            onClose={onClose}
+          />
+          <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center min-h-0 overscroll-contain">
             <div className="text-center max-w-md">
               <AlertCircle className="w-12 h-12 text-[var(--color-error)] mx-auto mb-4" />
               <p className="text-[var(--color-error)] mb-6 text-base">
@@ -68,52 +139,67 @@ export function PreviewPanel({
         </>
       ) : previewData ? (
         <>
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] flex-shrink-0 bg-[var(--color-background)] sticky top-0 z-10">
-            <div className="flex-1 min-w-0 pr-4">
-              <h2 className="text-lg font-semibold text-[var(--color-foreground)] truncate">
-                {previewData.name}
-              </h2>
-              <p className="text-sm text-[var(--color-foreground)]/60 truncate font-mono">
-                {previewData.path}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={() => onOpenPath(previewData.path)}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
-                title="Open with system application"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Open
-              </button>
-              <button
-                onClick={onClose}
-                className="p-2 text-[var(--color-foreground)]/60 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
-                title="Close preview"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
+          <PreviewHeader
+            variant="success"
+            name={previewData.name}
+            path={previewData.path}
+            onClose={onClose}
+            onOpenPath={onOpenPath}
+            hasZoomControls={hasZoomControls}
+            isTextPreview={isTextPreview}
+            zoomPercent={zoomPercent}
+            wrapLines={wrapLines}
+            sensitivity={sensitivity}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onZoomReset={handleZoomReset}
+            onSensitivityChange={setSensitivity}
+            onWrapToggle={() => setWrapLines((w) => !w)}
+          />
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div
+            ref={textViewportRef}
+            className="flex-1 overflow-auto p-4 min-h-0 overscroll-contain [contain:paint]"
+            tabIndex={0}
+            title="Cmd/Ctrl + scroll to zoom. Use - + buttons or Cmd/Ctrl +/- to zoom."
+          >
             {previewData.type === 'text' ? (
-              <pre className="text-sm text-[var(--color-foreground)] whitespace-pre-wrap font-mono">
+              <pre
+                className="font-mono bg-[var(--color-background)] rounded p-3 border border-[var(--color-border)]/50 text-[var(--color-foreground)]"
+                style={{
+                  fontSize: `${(zoomPercent / 100) * 14}px`,
+                  whiteSpace: wrapLines ? 'pre-wrap' : 'pre',
+                }}
+              >
                 {previewData.content}
               </pre>
             ) : (
-              <div className="text-sm text-[var(--color-foreground)]">
-                <p className="mb-4 text-[var(--color-foreground)]/60">
-                  PDF Preview: Showing first {previewData.preview_pages || 10} of {previewData.pages || 0} pages
-                </p>
-                <pre className="whitespace-pre-wrap font-mono text-sm">
-                  {previewData.content}
-                </pre>
+              <div className="min-h-full flex flex-col items-center justify-center">
+                {advancedPdfPreviewEnabled ? (
+                  <PdfPreviewViewport
+                    path={previewData.path}
+                    zoomPercent={zoomPercent}
+                    scrollRootRef={textViewportRef}
+                    onFirstPageRender={centerPdfInitialScroll}
+                  />
+                ) : (
+                  <div className="text-center max-w-sm p-6">
+                    <p className="text-[var(--color-foreground)]/70 mb-3">
+                      Advanced PDF preview is disabled. Open with your system viewer.
+                    </p>
+                    <button
+                      onClick={() => onOpenPath(previewData.path)}
+                      className="px-3 py-2 rounded bg-[var(--color-primary)] text-white hover:opacity-90"
+                    >
+                      Open PDF
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </>
       ) : null}
-    </div>
+    </aside>
   );
 }

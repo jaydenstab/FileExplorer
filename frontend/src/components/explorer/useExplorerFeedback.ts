@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { StatusState } from '../StatusBar';
 import type { FileItem } from './types';
 
-export interface UseExplorerFeedbackParams {
+interface UseExplorerFeedbackParams {
   search: {
     isSearching: boolean;
     debouncedQuery: string;
@@ -24,7 +24,7 @@ export interface UseExplorerFeedbackParams {
   };
 }
 
-export interface UseExplorerFeedbackResult {
+interface UseExplorerFeedbackResult {
   status: StatusState;
   reindexShowSuccess: boolean;
   errorMessage: string | null;

@@ -31,10 +31,11 @@ export function resultToFileItem(raw: string | SearchResultItem, index: number):
   const parts = path.split('/');
   const name = parts[parts.length - 1];
   const hasExtension = name.includes('.');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const item: FileItem = {
-    id: `file-${index}-${path}`,
+    id: normalizedPath,
     name,
-    path: path.startsWith('/') ? path : `/${path}`,
+    path: normalizedPath,
     type: hasExtension ? 'file' : 'folder',
   };
   if (typeof raw === 'object') {
@@ -65,7 +66,7 @@ export function buildSearchOptionsKey(params: {
 }
 
 /** Normalized search descriptor: React Query key for search/prefetch. */
-export interface SearchDescriptor {
+interface SearchDescriptor {
   queryKey: readonly unknown[];
 }
 

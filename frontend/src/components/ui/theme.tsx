@@ -11,8 +11,8 @@ const themeIcons = {
   dark: Moon,
 }
 
-export type ThemeToggleVariant = "button"
-export type ThemeToggleSize = "sm" | "md" | "lg"
+type ThemeToggleVariant = "button"
+type ThemeToggleSize = "sm" | "md" | "lg"
 
 type Theme = "light" | "dark"
 

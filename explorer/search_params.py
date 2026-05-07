@@ -2,6 +2,7 @@
 Parse search API query parameters into a structured form.
 """
 from typing import List, Optional, Set
+from .path_policy import normalize_directory
 
 
 def parse_search_params(request) -> dict:
@@ -14,11 +15,18 @@ def parse_search_params(request) -> dict:
     q = request.GET.get("q", "").strip()
 
     dirs_param = request.GET.get("dirs", "").strip()
+    errors: List[str] = []
     if dirs_param:
-        directories = [d.strip() for d in dirs_param.split(",") if d.strip()]
+        raw_directories = [d.strip() for d in dirs_param.split(",") if d.strip()]
     else:
         dir_param = request.GET.get("dir", "documents1").strip()
-        directories = [dir_param] if dir_param else ["documents1"]
+        raw_directories = [dir_param] if dir_param else ["documents1"]
+    directories: List[str] = []
+    for d in raw_directories:
+        try:
+            directories.append(normalize_directory(d))
+        except ValueError as e:
+            errors.append(str(e))
 
     include_scores = request.GET.get("include_scores", "false").lower() == "true"
 
@@ -30,7 +38,7 @@ def parse_search_params(request) -> dict:
             # Clamp to valid range for cosine distance (0-2)
             distance_threshold = max(0.0, min(2.0, raw))
         except ValueError:
-            pass
+            errors.append("distance_threshold must be a number")
 
     use_reranker = request.GET.get("use_reranker", "true").lower() == "true"
 
@@ -63,6 +71,7 @@ def parse_search_params(request) -> dict:
     tags: List[str] = [t.strip() for t in tags_param.split(",") if t.strip()] if tags_param else []
     tag_match = request.GET.get("tag_match", "any").strip().lower()
     if tag_match not in ("any", "all"):
+        errors.append("tag_match must be 'any' or 'all'")
         tag_match = "any"
 
     return {
@@ -77,4 +86,5 @@ def parse_search_params(request) -> dict:
         "case_sensitive": case_sensitive,
         "tags": tags,
         "tag_match": tag_match,
+        "errors": errors,
     }

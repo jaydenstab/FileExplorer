@@ -14,10 +14,30 @@ const parseJsonSafe = async (response: Response) => {
 
 const errorFromResponse = async (response: Response, fallback: string) => {
   const body = await parseJsonSafe(response);
-  const message =
+  const nestedMessage =
+    typeof body === 'object' && body !== null
+      ? (body as { error?: { message?: string }; error_message?: string }).error?.message ??
+        (body as { error_message?: string }).error_message
+      : undefined;
+  const rawMessage =
     typeof body === 'string'
       ? body || `${fallback} (${response.status})`
-      : body?.error || `${fallback} (${response.status})`;
+      : nestedMessage || (body as { error?: string })?.error || `${fallback} (${response.status})`;
+  const statusHint: Record<number, string> = {
+    400: 'Bad request.',
+    401: 'Unauthorized.',
+    403: 'Access denied for this file/path.',
+    404: 'Requested file/resource was not found.',
+    408: 'Request timed out.',
+    413: 'File is too large for this operation.',
+    429: 'Too many requests. Try again shortly.',
+    500: 'Server error occurred.',
+    502: 'Gateway error occurred.',
+    503: 'Service is temporarily unavailable.',
+    504: 'Gateway timed out.',
+  };
+  const hint = statusHint[response.status];
+  const message = hint ? `${rawMessage} ${hint}` : rawMessage;
   throw new Error(message);
 };
 
@@ -47,19 +67,29 @@ export interface SearchOptions {
   fileTypes?: string[];
 }
 
-export interface PreviewData {
-  type: 'text' | 'pdf';
+/** Text file preview - content is the file text */
+export interface TextPreview {
+  type: 'text';
   content: string;
   name: string;
   path: string;
   size?: number;
+}
+
+/** PDF preview - use pdfUrl for embedding; content is legacy and unused */
+export interface PdfPreview {
+  type: 'pdf';
+  name: string;
+  path: string;
   pages?: number;
   preview_pages?: number;
 }
 
-export interface ReindexResponse {
-  indexed_chunks: number;
-  directory: string;
+export type PreviewData = TextPreview | PdfPreview;
+
+/** URL for embedding a PDF in iframe/object/embed */
+export function getPdfEmbedUrl(path: string): string {
+  return `${API_BASE_URL}/file?path=${encodeURIComponent(path)}`;
 }
 
 export interface ReindexStartResponse {
@@ -130,20 +160,6 @@ export const searchFiles = async (
 };
 
 /**
- * Reindex a directory.
- * @param directory - Directory name to reindex
- */
-export const reindexDirectory = async (directory: string): Promise<ReindexResponse> => {
-  const response = await fetch(`${API_BASE_URL}/reindex?dir=${encodeURIComponent(directory)}`);
-
-  if (!response.ok) {
-    await errorFromResponse(response, 'Reindexing failed');
-  }
-
-  return response.json();
-};
-
-/**
  * Start an indexing job in the background.
  * @param directory - Directory name to index
  * @param slowMs - Optional artificial delay in milliseconds per file (for testing)
@@ -206,4 +222,13 @@ export const openFile = async (
 
   return response.json();
 };
+
+export const openPreview = async (path: string, signal?: AbortSignal): Promise<PreviewData> =>
+  openFile(path, 'preview', signal) as Promise<PreviewData>;
+
+export const openWithSystem = async (
+  path: string,
+  signal?: AbortSignal
+): Promise<{ success: boolean; message: string; path: string }> =>
+  openFile(path, 'open_os', signal) as Promise<{ success: boolean; message: string; path: string }>;
 

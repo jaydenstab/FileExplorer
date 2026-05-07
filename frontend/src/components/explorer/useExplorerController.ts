@@ -1,12 +1,19 @@
+import { useMemo } from 'react';
 import type { StatusState } from '../StatusBar';
 import { useExplorerState } from './useExplorerState';
 import { useExplorerSearch } from './useExplorerSearch';
 import { useReindexStatus } from './useReindexStatus';
 import { usePreviewPanel } from './usePreviewPanel';
 import { useExplorerFeedback } from './useExplorerFeedback';
+import {
+  buildExplorerFeedback,
+  buildExplorerFilters,
+  buildExplorerPreview,
+  buildExplorerReindex,
+  buildExplorerSearch,
+} from './explorerViewModels';
 
-export interface UseExplorerControllerResult {
-  // State
+export interface ExplorerFilters {
   searchQuery: string;
   handleSearch: (query: string) => void;
   selectedDirectories: string[];
@@ -25,8 +32,9 @@ export interface UseExplorerControllerResult {
   currentPage: number;
   activeFiltersSummary: string | null;
   handleResetFilters: () => void;
+}
 
-  // Search
+export interface ExplorerSearch {
   searchResults: ReturnType<typeof useExplorerSearch>['searchResults'];
   hasNext: boolean;
   isSearching: boolean;
@@ -34,25 +42,38 @@ export interface UseExplorerControllerResult {
   totalResults: number;
   handlePageChange: (newPage: number) => void;
   prefetchPreview: (path: string) => void;
+}
 
-  // Reindex
+export interface ExplorerReindex {
   startReindexMutation: ReturnType<typeof useReindexStatus>['startReindexMutation'];
   reindexStatus: ReturnType<typeof useReindexStatus>['reindexStatus'];
   handleReindex: () => void;
+}
 
-  // Preview
+export interface ExplorerPreview {
   previewData: ReturnType<typeof usePreviewPanel>['previewData'];
   previewError: ReturnType<typeof usePreviewPanel>['previewError'];
   previewErrorPath: ReturnType<typeof usePreviewPanel>['previewErrorPath'];
+  isClosing: ReturnType<typeof usePreviewPanel>['isClosing'];
+  isPreviewLoading: ReturnType<typeof usePreviewPanel>['isPreviewLoading'];
   handleFileClick: ReturnType<typeof usePreviewPanel>['handleFileClick'];
   openPathWithSystem: ReturnType<typeof usePreviewPanel>['openPathWithSystem'];
   closePreview: () => void;
+}
 
-  // Aggregated
+export interface ExplorerFeedback {
   status: StatusState;
   reindexShowSuccess: boolean;
   errorMessage: string | null;
   showNoResultsError: boolean;
+}
+
+export interface UseExplorerControllerResult {
+  filters: ExplorerFilters;
+  search: ExplorerSearch;
+  reindex: ExplorerReindex;
+  preview: ExplorerPreview;
+  feedback: ExplorerFeedback;
 }
 
 export function useExplorerController(): UseExplorerControllerResult {
@@ -122,44 +143,127 @@ export function useExplorerController(): UseExplorerControllerResult {
     },
   });
 
+  const filters = useMemo(
+    (): ExplorerFilters =>
+      buildExplorerFilters({
+      searchQuery,
+      handleSearch,
+      selectedDirectories,
+      handleDirectoryToggle,
+      minConfidence,
+      setMinConfidence,
+      distanceThreshold,
+      setDistanceThreshold,
+      useReranker,
+      setUseReranker,
+      selectedFileTypes,
+      onFileTypeToggle,
+      isDistanceInvalid,
+      advancedExpanded,
+      setAdvancedExpanded,
+      currentPage,
+      activeFiltersSummary,
+      handleResetFilters,
+    }),
+    [
+      searchQuery,
+      handleSearch,
+      selectedDirectories,
+      handleDirectoryToggle,
+      minConfidence,
+      setMinConfidence,
+      distanceThreshold,
+      setDistanceThreshold,
+      useReranker,
+      setUseReranker,
+      selectedFileTypes,
+      onFileTypeToggle,
+      isDistanceInvalid,
+      advancedExpanded,
+      setAdvancedExpanded,
+      currentPage,
+      activeFiltersSummary,
+      handleResetFilters,
+    ]
+  );
+
+  const searchGroup = useMemo(
+    (): ExplorerSearch =>
+      buildExplorerSearch({
+      searchResults: search.searchResults,
+      hasNext: search.hasNext,
+      isSearching: search.isSearching,
+      searchView: search.searchView,
+      totalResults: search.totalResults,
+      handlePageChange: search.handlePageChange,
+      prefetchPreview: search.prefetchPreview,
+    }),
+    [
+      search.searchResults,
+      search.hasNext,
+      search.isSearching,
+      search.searchView,
+      search.totalResults,
+      search.handlePageChange,
+      search.prefetchPreview,
+    ]
+  );
+
+  const reindexGroup = useMemo(
+    (): ExplorerReindex =>
+      buildExplorerReindex({
+      startReindexMutation: reindex.startReindexMutation,
+      reindexStatus: reindex.reindexStatus,
+      handleReindex: reindex.handleReindex,
+    }),
+    [reindex.startReindexMutation, reindex.reindexStatus, reindex.handleReindex]
+  );
+
+  const previewGroup = useMemo(
+    (): ExplorerPreview =>
+      buildExplorerPreview({
+      previewData: preview.previewData,
+      previewError: preview.previewError,
+      previewErrorPath: preview.previewErrorPath,
+      isClosing: preview.isClosing,
+      isPreviewLoading: preview.isPreviewLoading,
+      handleFileClick: preview.handleFileClick,
+      openPathWithSystem: preview.openPathWithSystem,
+      closePreview: preview.closePreview,
+    }),
+    [
+      preview.previewData,
+      preview.previewError,
+      preview.previewErrorPath,
+      preview.isClosing,
+      preview.isPreviewLoading,
+      preview.handleFileClick,
+      preview.openPathWithSystem,
+      preview.closePreview,
+    ]
+  );
+
+  const feedbackGroup = useMemo(
+    (): ExplorerFeedback =>
+      buildExplorerFeedback({
+      status: feedback.status,
+      reindexShowSuccess: feedback.reindexShowSuccess,
+      errorMessage: feedback.errorMessage,
+      showNoResultsError: feedback.showNoResultsError,
+    }),
+    [
+      feedback.status,
+      feedback.reindexShowSuccess,
+      feedback.errorMessage,
+      feedback.showNoResultsError,
+    ]
+  );
+
   return {
-    searchQuery,
-    handleSearch,
-    selectedDirectories,
-    handleDirectoryToggle,
-    minConfidence,
-    setMinConfidence,
-    distanceThreshold,
-    setDistanceThreshold,
-    useReranker,
-    setUseReranker,
-    selectedFileTypes,
-    onFileTypeToggle,
-    isDistanceInvalid,
-    advancedExpanded,
-    setAdvancedExpanded,
-    currentPage,
-    activeFiltersSummary,
-    handleResetFilters,
-    searchResults: search.searchResults,
-    hasNext: search.hasNext,
-    isSearching: search.isSearching,
-    searchView: search.searchView,
-    totalResults: search.totalResults,
-    handlePageChange: search.handlePageChange,
-    prefetchPreview: search.prefetchPreview,
-    startReindexMutation: reindex.startReindexMutation,
-    reindexStatus: reindex.reindexStatus,
-    handleReindex: reindex.handleReindex,
-    previewData: preview.previewData,
-    previewError: preview.previewError,
-    previewErrorPath: preview.previewErrorPath,
-    handleFileClick: preview.handleFileClick,
-    openPathWithSystem: preview.openPathWithSystem,
-    closePreview: preview.closePreview,
-    status: feedback.status,
-    reindexShowSuccess: feedback.reindexShowSuccess,
-    errorMessage: feedback.errorMessage,
-    showNoResultsError: feedback.showNoResultsError,
+    filters: filters,
+    search: searchGroup,
+    reindex: reindexGroup,
+    preview: previewGroup,
+    feedback: feedbackGroup,
   };
 }

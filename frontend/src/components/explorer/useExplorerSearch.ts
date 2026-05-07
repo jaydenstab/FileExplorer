@@ -1,10 +1,12 @@
-import { useMemo, useCallback, useEffect } from 'react';
+import { useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { searchFiles, openFile, type SearchResponse, type SearchOptions, type SearchResultItem, type PreviewData } from '../../lib/api';
+import { searchFiles, openPreview, type SearchResponse, type SearchOptions, type SearchResultItem, type PreviewData } from '../../lib/api';
 import type { FileItem, SearchView } from './types';
 import { resultToFileItem, buildSearchDescriptor } from './types';
 
-export interface UseExplorerSearchParams {
+const HOVER_PREFETCH_DELAY_MS = 150;
+
+interface UseExplorerSearchParams {
   debouncedQuery: string;
   selectedDirectories: string[];
   searchOptions: SearchOptions;
@@ -14,7 +16,7 @@ export interface UseExplorerSearchParams {
   setCurrentPage: (page: number | ((prev: number) => number)) => void;
 }
 
-export interface UseExplorerSearchResult {
+interface UseExplorerSearchResult {
   searchResults: FileItem[];
   hasNext: boolean;
   isSearching: boolean;
@@ -35,6 +37,13 @@ export function useExplorerSearch({
   setCurrentPage,
 }: UseExplorerSearchParams): UseExplorerSearchResult {
   const queryClient = useQueryClient();
+  const prefetchTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (prefetchTimeoutRef.current) window.clearTimeout(prefetchTimeoutRef.current);
+    };
+  }, []);
 
   const searchDescriptor = useMemo(
     () =>
@@ -107,16 +116,22 @@ export function useExplorerSearch({
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     },
-    [currentPage, hasNext]
+    [currentPage, hasNext, setCurrentPage]
   );
 
   const prefetchPreview = useCallback(
     (path: string) => {
-      queryClient.prefetchQuery({
-        queryKey: ['preview', path],
-        queryFn: ({ signal }) => openFile(path, 'preview', signal) as Promise<PreviewData>,
-        staleTime: 30_000,
-      });
+      // Skip prefetch for PDFs - they load via /api/file when displayed; avoid eager text extraction
+      if (path.toLowerCase().endsWith('.pdf')) return;
+      if (prefetchTimeoutRef.current) window.clearTimeout(prefetchTimeoutRef.current);
+      prefetchTimeoutRef.current = window.setTimeout(() => {
+        prefetchTimeoutRef.current = null;
+        queryClient.prefetchQuery({
+          queryKey: ['preview', path],
+          queryFn: ({ signal }) => openPreview(path, signal) as Promise<PreviewData>,
+          staleTime: 30_000,
+        });
+      }, HOVER_PREFETCH_DELAY_MS);
     },
     [queryClient]
   );

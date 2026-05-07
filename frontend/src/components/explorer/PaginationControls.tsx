@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
-export interface PaginationControlsProps {
+interface PaginationControlsProps {
   currentPage: number;
   hasNext: boolean;
   isSearching: boolean;

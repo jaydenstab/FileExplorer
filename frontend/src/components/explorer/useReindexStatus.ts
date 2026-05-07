@@ -1,15 +1,20 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { startReindex, getReindexStatus, type ReindexStatusResponse } from '../../lib/api';
+import {
+  startReindex,
+  getReindexStatus,
+  type ReindexStartResponse,
+  type ReindexStatusResponse,
+} from '../../lib/api';
 import type { StatusState } from '../StatusBar';
 
-export interface UseReindexStatusParams {
+interface UseReindexStatusParams {
   selectedDirectories: string[];
   setAdvancedExpanded: (expanded: boolean | ((prev: boolean) => boolean)) => void;
 }
 
-export interface UseReindexStatusResult {
-  startReindexMutation: ReturnType<typeof useMutation<string, Error, string>>;
+interface UseReindexStatusResult {
+  startReindexMutation: ReturnType<typeof useMutation<ReindexStartResponse, Error, string>>;
   reindexStatus: ReindexStatusResponse | undefined;
   reindexStatusError: Error | null;
   handleReindex: () => void;
@@ -32,6 +37,7 @@ export function useReindexStatus({
   const errorTimeoutRef = useRef<number | null>(null);
   const statusTimeoutRef = useRef<number | null>(null);
   const completeTimeoutRef = useRef<number | null>(null);
+  const jobIdClearTimeoutRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
   const prevJobIdRef = useRef<string | null>(null);
 
@@ -40,6 +46,7 @@ export function useReindexStatus({
       if (errorTimeoutRef.current) window.clearTimeout(errorTimeoutRef.current);
       if (statusTimeoutRef.current) window.clearTimeout(statusTimeoutRef.current);
       if (completeTimeoutRef.current) window.clearTimeout(completeTimeoutRef.current);
+      if (jobIdClearTimeoutRef.current) window.clearTimeout(jobIdClearTimeoutRef.current);
     };
   }, []);
 
@@ -75,23 +82,37 @@ export function useReindexStatus({
       });
     } else if (reindexStatus?.status === 'completed') {
       setReindexComplete(true);
-      completeTimeoutRef.current = window.setTimeout(() => setReindexComplete(false), 3000);
+      if (completeTimeoutRef.current) window.clearTimeout(completeTimeoutRef.current);
+      completeTimeoutRef.current = window.setTimeout(() => {
+        setReindexComplete(false);
+        completeTimeoutRef.current = null;
+      }, 3000);
 
       queryClient.invalidateQueries({ queryKey: ['search'] });
 
       if (statusTimeoutRef.current) window.clearTimeout(statusTimeoutRef.current);
       statusTimeoutRef.current = window.setTimeout(() => {
         setStatusContribution((prev) => (prev?.type === 'reindex' ? null : prev));
+        statusTimeoutRef.current = null;
       }, 3000);
 
-      setTimeout(() => setJobId(null), 3000);
+      if (jobIdClearTimeoutRef.current) window.clearTimeout(jobIdClearTimeoutRef.current);
+      jobIdClearTimeoutRef.current = window.setTimeout(() => {
+        setJobId(null);
+        jobIdClearTimeoutRef.current = null;
+      }, 3000);
     } else if (reindexStatus?.status === 'error') {
       if (statusTimeoutRef.current) window.clearTimeout(statusTimeoutRef.current);
       statusTimeoutRef.current = window.setTimeout(() => {
         setStatusContribution((prev) => (prev?.type === 'reindex' ? null : prev));
+        statusTimeoutRef.current = null;
       }, 2000);
 
-      setTimeout(() => setJobId(null), 5000);
+      if (jobIdClearTimeoutRef.current) window.clearTimeout(jobIdClearTimeoutRef.current);
+      jobIdClearTimeoutRef.current = window.setTimeout(() => {
+        setJobId(null);
+        jobIdClearTimeoutRef.current = null;
+      }, 5000);
     }
   }, [reindexStatus, queryClient]);
 

@@ -1,7 +1,7 @@
 import { Folder } from 'lucide-react';
 import { AVAILABLE_DIRECTORIES } from './types';
 
-export interface DirectorySidebarProps {
+interface DirectorySidebarProps {
   selectedDirectories: string[];
   onToggle: (directory: string) => void;
 }

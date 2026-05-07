@@ -3,19 +3,19 @@ import { Folder, FileText, ExternalLink } from 'lucide-react';
 import type { FileItem } from './types';
 import { formatRelevanceScore } from './types';
 
-export interface ResultRowProps {
+interface ResultRowProps {
   file: FileItem;
-  onPreviewClick: () => void;
-  onOpenClick: () => void;
-  onMouseEnter: () => void;
+  onPreviewClick: (file: FileItem) => void;
+  onOpenClick: (file: FileItem) => void;
+  onMouseEnter: (file: FileItem) => void;
   showRerankScore?: boolean;
 }
 
 export const ResultRow = memo(({ file, onPreviewClick, onOpenClick, onMouseEnter, showRerankScore }: ResultRowProps) => {
   return (
     <div
-      onMouseEnter={onMouseEnter}
-      onClick={onPreviewClick}
+      onMouseEnter={() => onMouseEnter(file)}
+      onClick={() => onPreviewClick(file)}
       className="group bg-[var(--color-card)] hover:bg-[var(--color-muted)] border border-[var(--color-border)] hover:border-[var(--color-primary)] rounded-lg p-4 transition-all duration-200 cursor-pointer"
     >
       <div className="flex items-start gap-3">
@@ -48,10 +48,11 @@ export const ResultRow = memo(({ file, onPreviewClick, onOpenClick, onMouseEnter
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onOpenClick();
+                  onOpenClick(file);
                 }}
                 className="open-os-button opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 text-xs text-[var(--color-foreground)]/60 hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 rounded"
-                title="Open with system application"
+                title="Open with system application (does not show in preview pane)"
+                aria-label="Open with system application (does not show in preview pane)"
               >
                 <ExternalLink className="w-3 h-3" />
               </button>

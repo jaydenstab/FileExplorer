@@ -16,6 +16,7 @@ from .search_execution import (
     semantic_search_raw,
 )
 from .search_params import parse_search_params
+from .api_response import api_error, api_ok
 
 
 def _json_base(
@@ -35,7 +36,7 @@ def _json_base(
         "query_confidence_level": query_confidence_level,
         **extra,
     }
-    return JsonResponse(body)
+    return api_ok(body)
 
 
 @require_GET
@@ -66,15 +67,21 @@ def api_search(request):
     case_sensitive = params["case_sensitive"]
     tags = params["tags"]
     tag_match = params["tag_match"]
+    errors = params["errors"]
 
     if not q:
-        return JsonResponse({"error": "missing 'q' parameter"}, status=400)
+        return api_error("missing_query", "missing 'q' parameter", 400)
     if not directories or not all(directories):
-        return JsonResponse({"error": "at least one directory must be specified"}, status=400)
+        return api_error(
+            "invalid_directories", "at least one directory must be specified", 400
+        )
+    if errors:
+        return api_error("invalid_query_params", "Invalid search parameters", 400, details={"errors": errors})
     if search_mode is None:
-        return JsonResponse(
-            {"error": "search_mode must be 'semantic' or 'text'"},
-            status=400,
+        return api_error(
+            "invalid_search_mode",
+            "search_mode must be 'semantic' or 'text'",
+            400,
         )
 
     page_str = request.GET.get("page")
@@ -115,7 +122,7 @@ def api_search(request):
                     q, directories, k, need_distances, use_reranker
                 )
             except RerankerError as e:
-                return JsonResponse({"error": str(e)}, status=503)
+                return api_error("reranker_unavailable", str(e), 503)
             q_conf_score, q_conf_level = confidence_for_semantic(raw)
             all_results = apply_semantic_result_filters(
                 raw,
@@ -171,7 +178,7 @@ def api_search(request):
         try:
             raw = semantic_search_raw(q, directories, k, need_distances, use_reranker)
         except RerankerError as e:
-            return JsonResponse({"error": str(e)}, status=503)
+            return api_error("reranker_unavailable", str(e), 503)
         q_conf_score, q_conf_level = confidence_for_semantic(raw)
         results = apply_semantic_result_filters(
             raw,

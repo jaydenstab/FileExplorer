@@ -7,6 +7,8 @@ from django.views.decorators.csrf import csrf_exempt
 from semantic_index.indexer import index_documents
 from semantic_index.progress import start_job, update_job, finish_job, fail_job, get_job
 import threading
+from .api_response import api_error, api_ok
+from .path_policy import normalize_directory
 
 
 @require_GET
@@ -25,12 +27,13 @@ def api_reindex(request):
     Note: This is the legacy synchronous endpoint. For progress tracking, use
     /api/reindex/start instead.
     """
-    directory = request.GET.get("dir", "documents1").strip()
-    if not directory:
-        return JsonResponse({"error": "directory name cannot be empty"}, status=400)
+    try:
+        directory = normalize_directory(request.GET.get("dir", "documents1"))
+    except ValueError as e:
+        return api_error("invalid_directory", str(e), 400)
     
     count = index_documents(directory=directory)
-    return JsonResponse({"indexed_chunks": count, "directory": directory})
+    return api_ok({"indexed_chunks": count, "directory": directory})
 
 def _run_indexing(job_id: str, directory: str, slow_ms: int):
     """
@@ -83,9 +86,10 @@ def api_reindex_start(request):
     
     Returns JSON with job_id that can be used to check progress.
     """
-    directory = request.GET.get("dir", "documents1").strip()
-    if not directory:
-        return JsonResponse({"error": "directory name cannot be empty"}, status=400)
+    try:
+        directory = normalize_directory(request.GET.get("dir", "documents1"))
+    except ValueError as e:
+        return api_error("invalid_directory", str(e), 400)
     
     # Parse slow_ms parameter (artificial delay for testing progress bar)
     # Example: slow_ms=250 means wait 0.25 seconds per file
@@ -93,7 +97,7 @@ def api_reindex_start(request):
     try:
         slow_ms = max(0, int(slow_ms_str))  # Ensure non-negative
     except ValueError:
-        slow_ms = 0  # Default: no delay
+        return api_error("invalid_slow_ms", "slow_ms must be an integer", 400)
     
     # Create a new job in the progress store
     # total=0 initially because we don't know how many files yet
@@ -107,7 +111,7 @@ def api_reindex_start(request):
     thread.start()  # Start the thread (calls _run_indexing)
     
     # Return immediately - don't wait for indexing to finish
-    return JsonResponse({"job_id": job_id})
+    return api_ok({"job_id": job_id})
 
 
 @require_GET
@@ -136,10 +140,10 @@ def api_reindex_status(request):
     """
     job_id = request.GET.get("job_id", "").strip()
     if not job_id:
-        return JsonResponse({"error": "missing 'job_id' parameter"}, status=400)
+        return api_error("missing_job_id", "missing 'job_id' parameter", 400)
     
     progress = get_job(job_id)
     if progress is None:
-        return JsonResponse({"error": "Job not found"}, status=404)
+        return api_error("job_not_found", "Job not found", 404)
     
-    return JsonResponse(progress)
+    return api_ok(progress)

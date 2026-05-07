@@ -1,6 +1,6 @@
 import { RotateCw, CheckCircle2 } from 'lucide-react';
 
-export interface ReindexButtonProps {
+interface ReindexButtonProps {
   isPending: boolean;
   showSuccess: boolean;
   onReindex: () => void;

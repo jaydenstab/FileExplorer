@@ -10,7 +10,7 @@ This file acts as a central import point. Views are split into:
 from django.http import HttpResponse
 from .views_search import api_search
 from .views_reindex import api_reindex, api_reindex_start, api_reindex_status
-from .views_open import api_open
+from .views_open import api_open, api_file
 from .views_library import (
     api_library_supported,
     api_library_list,
@@ -29,6 +29,7 @@ __all__ = [
     "api_reindex_start",
     "api_reindex_status",
     "api_open",
+    "api_file",
     "api_library_supported",
     "api_library_list",
     "api_library_upload",

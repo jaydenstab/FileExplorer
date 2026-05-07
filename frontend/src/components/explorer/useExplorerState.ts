@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { SearchOptions } from '../../lib/api';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import {
   DEFAULT_PAGE_SIZE,
   AVAILABLE_DIRECTORIES,
@@ -10,7 +11,7 @@ import {
   SEARCH_DEBOUNCE_MS,
 } from './types';
 
-export interface UseExplorerStateResult {
+interface UseExplorerStateResult {
   // Search
   searchQuery: string;
   debouncedQuery: string;
@@ -51,7 +52,10 @@ export interface UseExplorerStateResult {
 
 export function useExplorerState(): UseExplorerStateResult {
   const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const isEmptyQuery = useCallback((q: string) => !q.trim(), []);
+  const debouncedQuery = useDebouncedValue(searchQuery, SEARCH_DEBOUNCE_MS, {
+    immediateWhen: isEmptyQuery,
+  });
   const [selectedDirectories, setSelectedDirectories] = useState<string[]>([AVAILABLE_DIRECTORIES[0]]);
   const pageSize = DEFAULT_PAGE_SIZE;
   const [minConfidence, setMinConfidence] = useState<'' | 'high' | 'medium' | 'low'>('');
@@ -60,25 +64,12 @@ export function useExplorerState(): UseExplorerStateResult {
   const [selectedFileTypes, setSelectedFileTypes] = useState<string[]>([]);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const debounceTimeoutRef = useRef<number | null>(null);
   const prevSearchOptionsKeyRef = useRef<string | null>(null);
 
-  // Debounce search query (owned here so all reset policy lives in one place)
+  // Reset page when debounced query changes (query or filters)
   useEffect(() => {
-    if (debounceTimeoutRef.current) window.clearTimeout(debounceTimeoutRef.current);
-    if (!searchQuery.trim()) {
-      setDebouncedQuery('');
-      setCurrentPage(1);
-      return;
-    }
-    debounceTimeoutRef.current = window.setTimeout(() => {
-      setDebouncedQuery(searchQuery);
-      setCurrentPage(1);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      if (debounceTimeoutRef.current) window.clearTimeout(debounceTimeoutRef.current);
-    };
-  }, [searchQuery]);
+    setCurrentPage(1);
+  }, [debouncedQuery]);
 
   const searchOptions = useMemo((): SearchOptions => {
     const opts: SearchOptions = { useReranker };

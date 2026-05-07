@@ -3,7 +3,7 @@ import { formatRelevanceScore } from './types';
 import { ResultRow } from './ResultRow';
 import { PaginationControls } from './PaginationControls';
 
-export interface ResultsListProps {
+interface ResultsListProps {
   searchResults: FileItem[];
   totalResults: number;
   hasNext: boolean;
@@ -66,9 +66,9 @@ export function ResultsList({
           <ResultRow
             key={file.id}
             file={file}
-            onPreviewClick={() => onFilePreview(file)}
-            onOpenClick={() => onFileOpen(file)}
-            onMouseEnter={() => onFileHover(file)}
+            onPreviewClick={onFilePreview}
+            onOpenClick={onFileOpen}
+            onMouseEnter={onFileHover}
             showRerankScore={useReranker}
           />
         ))}
