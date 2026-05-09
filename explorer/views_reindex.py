@@ -1,14 +1,18 @@
 """
 Reindexing API views - handles rebuilding the semantic search index with progress tracking.
 """
-from django.http import JsonResponse
-from django.views.decorators.http import require_GET, require_http_methods
-from django.views.decorators.csrf import csrf_exempt
-from semantic_index.indexer import index_documents
-from semantic_index.progress import start_job, update_job, finish_job, fail_job, get_job
+import logging
 import threading
+
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_http_methods
+from semantic_index.indexer import index_documents
+from semantic_index.progress import fail_job, finish_job, get_job, start_job, update_job
+
 from .api_response import api_error, api_ok
 from .path_policy import normalize_directory
+
+logger = logging.getLogger(__name__)
 
 
 @require_GET
@@ -99,17 +103,26 @@ def api_reindex_start(request):
     except ValueError:
         return api_error("invalid_slow_ms", "slow_ms must be an integer", 400)
     
-    # Create a new job in the progress store
-    # total=0 initially because we don't know how many files yet
-    job_id = start_job(directory, total=0)
-    
-    # BACKGROUND THREADING: Start indexing in a separate thread
-    # This allows the HTTP request to return immediately with job_id,
-    # while indexing continues in the background
-    thread = threading.Thread(target=_run_indexing, args=(job_id, directory, slow_ms))
-    thread.daemon = True  # Thread dies when main program exits
-    thread.start()  # Start the thread (calls _run_indexing)
-    
+    try:
+        # Create a new job in the progress store
+        # total=0 initially because we don't know how many files yet
+        job_id = start_job(directory, total=0)
+
+        # BACKGROUND THREADING: Start indexing in a separate thread
+        # This allows the HTTP request to return immediately with job_id,
+        # while indexing continues in the background
+        thread = threading.Thread(target=_run_indexing, args=(job_id, directory, slow_ms))
+        thread.daemon = True  # Thread dies when main program exits
+        thread.start()  # Start the thread (calls _run_indexing)
+    except Exception as e:
+        logger.exception("reindex start failed")
+        return api_error(
+            "reindex_start_failed",
+            "Could not start the indexing job. Check server logs for details.",
+            503,
+            details={"reason": str(e)},
+        )
+
     # Return immediately - don't wait for indexing to finish
     return api_ok({"job_id": job_id})
 

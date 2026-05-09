@@ -135,6 +135,28 @@ class OpenApiSafetyTests(TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertEqual(res.json()["error"]["code"], "invalid_directory")
 
+    def test_reindex_start_returns_job_id(self):
+        res = self.client.post("/api/reindex/start?dir=documents1")
+        self.assertEqual(res.status_code, 200, res.content)
+        data = res.json()
+        self.assertIn("job_id", data)
+        self.assertTrue(data["job_id"])
+
+    def test_reindex_start_rejects_invalid_directory(self):
+        res = self.client.post("/api/reindex/start?dir=nope")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()["error"]["code"], "invalid_directory")
+
+    @patch("explorer.file_store.get_library_root", side_effect=OSError("read-only fs"))
+    def test_reindex_start_does_not_require_library_dir(self, _mock_root):
+        """
+        Path validation must not mkdir the library root; otherwise reindexing
+        documents* fails on read-only or permission-blocked library paths.
+        """
+        res = self.client.post("/api/reindex/start?dir=documents1")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertIn("job_id", res.json())
+
     @patch("explorer.views_open.sys.platform", "linux")
     @patch("explorer.views_open.subprocess.run")
     def test_open_os_subprocess_failure(self, mock_run):

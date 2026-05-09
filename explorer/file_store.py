@@ -15,15 +15,31 @@ DEFAULT_LIBRARY_DIRNAME = "indexed_files"
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
+def _parsed_library_relpath() -> str:
+    """
+    Project-relative library directory (POSIX, no leading slash).
+    Used for path policy and URL params — does not touch the filesystem.
+    """
+    raw = (os.getenv("FILE_LIBRARY_DIR", DEFAULT_LIBRARY_DIRNAME) or DEFAULT_LIBRARY_DIRNAME).strip()
+    if not raw:
+        return DEFAULT_LIBRARY_DIRNAME
+    norm = Path(raw).as_posix().strip("/")
+    if not norm:
+        return DEFAULT_LIBRARY_DIRNAME
+    p = Path(norm)
+    if p.is_absolute() or ".." in p.parts:
+        raise ValueError("invalid FILE_LIBRARY_DIR")
+    return norm
+
+
 def get_library_root() -> Path:
-    name = os.getenv("FILE_LIBRARY_DIR", DEFAULT_LIBRARY_DIRNAME).strip() or DEFAULT_LIBRARY_DIRNAME
-    root = (BASE_DIR / name).resolve()
+    root = (BASE_DIR / _parsed_library_relpath()).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def get_library_dirname() -> str:
-    return str(get_library_root().relative_to(BASE_DIR.resolve()))
+    return _parsed_library_relpath()
 
 
 def _sanitize_filename(name: str) -> str:
