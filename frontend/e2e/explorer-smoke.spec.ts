@@ -21,8 +21,11 @@ test.describe('Full stack (CI with Django + Vite)', () => {
     await page.getByRole('radio', { name: /Literal text/i }).check();
 
     await page.getByPlaceholder('Search files and folders...').fill('e2e_page2_unique_scroll');
-    await expect(page.getByRole('heading', { name: 'e2e_two_page.pdf' })).toBeVisible({ timeout: 60_000 });
-    await page.getByRole('heading', { name: 'e2e_two_page.pdf' }).click();
+    // Details view uses table cells, not headings; scope to listbox to avoid sidebar "Recent" hits.
+    const searchResults = page.getByRole('listbox', { name: /Search results/ });
+    const hit = searchResults.getByText('e2e_two_page.pdf', { exact: true });
+    await expect(hit).toBeVisible({ timeout: 60_000 });
+    await hit.click();
 
     const scroll = page.getByTestId('preview-scroll-root');
     await scroll.waitFor({ state: 'visible', timeout: 30_000 });

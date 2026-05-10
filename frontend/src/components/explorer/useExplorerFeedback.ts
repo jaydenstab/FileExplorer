@@ -41,6 +41,7 @@ export function useExplorerFeedback({
   const [searchStatusContribution, setSearchStatusContribution] = useState<StatusState | null>(null);
   const searchStatusTimeoutRef = useRef<number | null>(null);
 
+  // Short-lived "Searching…" line in StatusBar; clears shortly after fetch settles.
   useEffect(() => {
     if (search.isSearching && search.debouncedQuery.trim()) {
       setSearchStatusContribution({
@@ -57,7 +58,7 @@ export function useExplorerFeedback({
     return () => {
       if (searchStatusTimeoutRef.current) window.clearTimeout(searchStatusTimeoutRef.current);
     };
-  }, []);
+  }, []); // clear pending search status timeout on unmount
 
   const status = useMemo((): StatusState => {
     const c =

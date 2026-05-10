@@ -1,15 +1,20 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import type { SearchOptions } from '../../lib/api';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import {
   DEFAULT_PAGE_SIZE,
-  AVAILABLE_DIRECTORIES,
   DISTANCE_MIN,
   DISTANCE_MAX,
   getActiveFiltersSummary,
   buildSearchOptionsKey,
   SEARCH_DEBOUNCE_MS,
+  type ResultsViewMode,
 } from './types';
+
+interface UseExplorerStateParams {
+  /** Top-level document directory names from GET /api/config/document-roots */
+  documentRootDirs: string[];
+}
 
 interface UseExplorerStateResult {
   // Search
@@ -17,9 +22,17 @@ interface UseExplorerStateResult {
   debouncedQuery: string;
   handleSearch: (query: string) => void;
 
+  // Results presentation (Windows Explorer–style item view)
+  resultsViewMode: ResultsViewMode;
+  setResultsViewMode: (v: ResultsViewMode | ((p: ResultsViewMode) => ResultsViewMode)) => void;
+  selectedResultIndex: number | null;
+  setSelectedResultIndex: (v: number | null | ((p: number | null) => number | null)) => void;
+
   // Directories
   selectedDirectories: string[];
   handleDirectoryToggle: (directory: string) => void;
+  /** After renaming a document root on disk, map selection from old name to new. */
+  replaceSelectedRootName: (fromName: string, toName: string) => void;
 
   // Search mode
   searchMode: 'semantic' | 'text';
@@ -54,31 +67,41 @@ interface UseExplorerStateResult {
   handleResetFilters: () => void;
 }
 
-export function useExplorerState(): UseExplorerStateResult {
+export function useExplorerState({ documentRootDirs }: UseExplorerStateParams): UseExplorerStateResult {
   const [searchQuery, setSearchQuery] = useState('');
   const isEmptyQuery = useCallback((q: string) => !q.trim(), []);
   const debouncedQuery = useDebouncedValue(searchQuery, SEARCH_DEBOUNCE_MS, {
     immediateWhen: isEmptyQuery,
   });
-  const [selectedDirectories, setSelectedDirectories] = useState<string[]>([AVAILABLE_DIRECTORIES[0]]);
+  const rootsKey = documentRootDirs.join('\0');
+  const [selectedDirectories, setSelectedDirectories] = useState<string[]>(() =>
+    documentRootDirs.length > 0 ? [documentRootDirs[0]] : []
+  );
   const pageSize = DEFAULT_PAGE_SIZE;
-  const [searchMode, setSearchMode] = useState<'semantic' | 'text'>('semantic');
-  const [minConfidence, setMinConfidence] = useState<'' | 'high' | 'medium' | 'low'>('');
-  const [distanceThreshold, setDistanceThreshold] = useState('');
-  const [useReranker, setUseReranker] = useState(true);
+  const [searchMode, setSearchModeState] = useState<'semantic' | 'text'>('semantic');
+  const [minConfidence, setMinConfidenceState] = useState<'' | 'high' | 'medium' | 'low'>('');
+  const [distanceThreshold, setDistanceThresholdState] = useState('');
+  const [useReranker, setUseRerankerState] = useState(true);
   const [selectedFileTypes, setSelectedFileTypes] = useState<string[]>([]);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const prevSearchOptionsKeyRef = useRef<string | null>(null);
+  const [resultsViewMode, setResultsViewMode] = useState<ResultsViewMode>('details');
+  const [selectedResultIndex, setSelectedResultIndex] = useState<number | null>(null);
 
-  // Reset page when debounced query changes (query or filters)
+  // API-driven roots changed: drop invalid selections (no discrete user action).
+  useEffect(() => {
+    if (documentRootDirs.length === 0) return;
+    setSelectedDirectories((prev) => {
+      const filtered = prev.filter((d) => documentRootDirs.includes(d));
+      if (filtered.length > 0) return filtered;
+      return [documentRootDirs[0]];
+    });
+  }, [rootsKey]);
+
+  // Debounced query updates without a single "submit" handler—reset page when it changes.
   useEffect(() => {
     setCurrentPage(1);
   }, [debouncedQuery]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchMode]);
 
   const searchOptions = useMemo((): SearchOptions => {
     const opts: SearchOptions = { useReranker, searchMode };
@@ -108,13 +131,37 @@ export function useExplorerState(): UseExplorerStateResult {
     [searchMode, minConfidence, distanceThreshold, useReranker, selectedFileTypes]
   );
 
-  // Reset pagination when filters change (skip initial mount)
+  const selectedDirectoriesKey = useMemo(() => selectedDirectories.slice().sort().join('\0'), [selectedDirectories]);
+
+  const selectionResetKey = useMemo(
+    () => [debouncedQuery, String(currentPage), searchMode, searchOptionsKey, selectedDirectoriesKey].join('|'),
+    [debouncedQuery, currentPage, searchMode, searchOptionsKey, selectedDirectoriesKey]
+  );
+
+  // Result list identity changed—clear row selection (no single handler covers all triggers).
   useEffect(() => {
-    if (prevSearchOptionsKeyRef.current !== null && prevSearchOptionsKeyRef.current !== searchOptionsKey) {
-      setCurrentPage(1);
-    }
-    prevSearchOptionsKeyRef.current = searchOptionsKey;
-  }, [searchOptionsKey]);
+    setSelectedResultIndex(null);
+  }, [selectionResetKey]);
+
+  const setSearchMode = useCallback((value: 'semantic' | 'text') => {
+    setSearchModeState(value);
+    setCurrentPage(1);
+  }, []);
+
+  const setMinConfidence = useCallback((value: '' | 'high' | 'medium' | 'low') => {
+    setMinConfidenceState(value);
+    setCurrentPage(1);
+  }, []);
+
+  const setDistanceThreshold = useCallback((value: string) => {
+    setDistanceThresholdState(value);
+    setCurrentPage(1);
+  }, []);
+
+  const setUseReranker = useCallback((value: boolean) => {
+    setUseRerankerState(value);
+    setCurrentPage(1);
+  }, []);
 
   const activeFiltersSummary = useMemo(
     () =>
@@ -141,10 +188,15 @@ export function useExplorerState(): UseExplorerStateResult {
     setCurrentPage(1);
   }, []);
 
+  const replaceSelectedRootName = useCallback((fromName: string, toName: string) => {
+    setSelectedDirectories((prev) => prev.map((d) => (d === fromName ? toName : d)));
+  }, []);
+
   const onFileTypeToggle = useCallback((ext: string) => {
     setSelectedFileTypes((prev) =>
       prev.includes(ext) ? prev.filter((x) => x !== ext) : [...prev, ext]
     );
+    setCurrentPage(1);
   }, []);
 
   const handleResetFilters = useCallback(() => {
@@ -160,8 +212,13 @@ export function useExplorerState(): UseExplorerStateResult {
     searchQuery,
     debouncedQuery,
     handleSearch,
+    resultsViewMode,
+    setResultsViewMode,
+    selectedResultIndex,
+    setSelectedResultIndex,
     selectedDirectories,
     handleDirectoryToggle,
+    replaceSelectedRootName,
     searchMode,
     setSearchMode,
     minConfidence,

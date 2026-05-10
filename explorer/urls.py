@@ -13,6 +13,9 @@ from .views import (
     api_tags_list,
     api_tags_for_file,
     api_tags_set,
+    api_recent,
+    api_fs_rename,
+    api_document_roots,
 )
 
 urlpatterns = [
@@ -29,5 +32,8 @@ urlpatterns = [
     path("tags/list", api_tags_list),
     path("tags/for_file", api_tags_for_file),
     path("tags/set", api_tags_set),
+    path("recent", api_recent),
+    path("fs/rename", api_fs_rename),
+    path("config/document-roots", api_document_roots),
 ]
 

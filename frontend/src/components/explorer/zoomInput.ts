@@ -32,12 +32,12 @@ export function normalizeWheelDelta(deltaY: number, deltaMode: number): number {
 /** Default threshold (in normalized pixels) to trigger one zoom step. Tuned for macOS trackpad. */
 export const ZOOM_WHEEL_THRESHOLD_DEFAULT = 60;
 
-export interface ZoomAccumulator {
+interface ZoomAccumulator {
   apply: (normalizedDelta: number) => number;
   reset: () => void;
 }
 
-export interface CreateZoomAccumulatorOptions {
+interface CreateZoomAccumulatorOptions {
   /** Threshold in normalized pixels per zoom step. Higher = less sensitive. */
   threshold?: number;
 }
@@ -69,9 +69,9 @@ export function createZoomAccumulator(
   };
 }
 
-export const ZOOM_MIN = 50;
-export const ZOOM_MAX = 200;
-export const ZOOM_STEP = 10;
+const ZOOM_MIN = 50;
+const ZOOM_MAX = 200;
+const ZOOM_STEP = 10;
 export const ZOOM_DEFAULT = 80;
 
 /** PDF-specific zoom range (wider for document viewing) */

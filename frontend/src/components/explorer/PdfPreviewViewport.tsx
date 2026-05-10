@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
+import { computePdfFitWidthZoomPercent } from './pdfFitWidth';
 import { useVisiblePdfPages } from './useVisiblePdfPages';
 import { usePdfPreviewScale } from './usePdfPreviewScale';
 import { scheduleBatchedIdleWork } from './pdfRenderScheduler';
@@ -27,6 +28,12 @@ interface PdfPreviewViewportProps {
   scrollRootRef: React.RefObject<HTMLElement | null>;
   /** Called once when the first page has finished rendering. Receives the path for staleness checks. */
   onFirstPageRender?: (path: string) => void;
+  /** When true, debounced ResizeObserver updates zoom to fit scroll width (page 1). */
+  pdfFitWidthActive?: boolean;
+  /** Bump (e.g. after reset) to force a fresh fit-width measurement. */
+  pdfFitWidthNonce?: number;
+  /** Parent applies clamped zoom; only invoked while fit-width mode is active. */
+  onPdfFitWidthZoom?: (percent: number) => void;
 }
 
 const MAX_CONCURRENT_RENDERS = 3;
@@ -34,11 +41,16 @@ const MAX_PAGE_RENDER_RETRIES = 1;
 const MAX_PREMEASURE_BATCH = 8;
 type RenderTaskLike = { cancel: () => void; promise: Promise<unknown> };
 
+const PDF_FIT_WIDTH_RESIZE_DEBOUNCE_MS = 120;
+
 export function PdfPreviewViewport({
   path,
   zoomPercent,
   scrollRootRef,
   onFirstPageRender,
+  pdfFitWidthActive = false,
+  pdfFitWidthNonce = 0,
+  onPdfFitWidthZoom,
 }: PdfPreviewViewportProps) {
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [pageWarning, setPageWarning] = useState<string | null>(null);
@@ -54,6 +66,8 @@ export function PdfPreviewViewport({
   const onFirstPageRenderRef = useRef(onFirstPageRender);
   const renderedPagesRef = useRef<Set<number>>(new Set());
   onFirstPageRenderRef.current = onFirstPageRender;
+  const onPdfFitWidthZoomRef = useRef(onPdfFitWidthZoom);
+  onPdfFitWidthZoomRef.current = onPdfFitWidthZoom;
 
   const scale = debouncedZoomPercent / 100;
 
@@ -76,6 +90,51 @@ export function PdfPreviewViewport({
     path,
     handleDocReset
   );
+
+  useEffect(() => {
+    if (!pdfFitWidthActive || !onPdfFitWidthZoomRef.current) return;
+    const pdfDoc = pdfDocRef.current;
+    const root = scrollRootRef.current;
+    if (!pdfDoc || numPages < 1 || !root || loading) return;
+
+    let cancelled = false;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const measureAndApply = () => {
+      if (cancelled || currentPathRef.current !== path) return;
+      const doc = pdfDocRef.current;
+      const el = scrollRootRef.current;
+      if (!doc || !el || el.clientWidth < 16) return;
+
+      getOrLoadPage(doc, pageCacheRef.current, 1)
+        .then((page) => {
+          if (cancelled || currentPathRef.current !== path) return;
+          const pct = computePdfFitWidthZoomPercent(page, el);
+          onPdfFitWidthZoomRef.current?.(pct);
+        })
+        .catch(() => {});
+    };
+
+    measureAndApply();
+
+    const scheduleResize = () => {
+      if (cancelled) return;
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        measureAndApply();
+      }, PDF_FIT_WIDTH_RESIZE_DEBOUNCE_MS);
+    };
+
+    const ro = new ResizeObserver(scheduleResize);
+    ro.observe(root);
+
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+      if (resizeTimer) clearTimeout(resizeTimer);
+    };
+  }, [path, numPages, loading, pdfFitWidthActive, pdfFitWidthNonce, scrollRootRef]);
 
   const visiblePages = useVisiblePdfPages(
     containerRef,

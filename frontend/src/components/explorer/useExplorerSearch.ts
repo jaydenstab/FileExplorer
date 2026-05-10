@@ -43,7 +43,7 @@ export function useExplorerSearch({
     return () => {
       if (prefetchTimeoutRef.current) window.clearTimeout(prefetchTimeoutRef.current);
     };
-  }, []);
+  }, []); // hover prefetch debounce cleanup
 
   const searchDescriptor = useMemo(
     () =>
@@ -87,7 +87,7 @@ export function useExplorerSearch({
   const searchResults: FileItem[] = searchView?.items || [];
   const hasNext = searchView?.hasNext || false;
 
-  // Prefetch next page when available
+  // Warm next page in the cache when the user might paginate (not a fetch-on-mount anti-pattern).
   useEffect(() => {
     if (!debouncedQuery.trim() || !hasNext) return;
     const nextDescriptor = buildSearchDescriptor({

@@ -64,9 +64,9 @@ describe('PreviewPanel zoom controls', () => {
     expect(screen.getByText(/80%/)).toBeInTheDocument();
   });
 
-  it('renders wrap toggle for text preview', () => {
+  it('renders wrap toggle for text preview (default wrapped)', () => {
     render(<PreviewPanel {...defaultProps} />);
-    expect(screen.getByLabelText('Wrap lines')).toBeInTheDocument();
+    expect(screen.getByLabelText('Disable line wrap')).toBeInTheDocument();
   });
 
   it('has accessible labels on Open and Close', () => {
@@ -91,7 +91,7 @@ describe('PreviewPanel zoom controls', () => {
     expect(screen.getByText(/80%/)).toBeInTheDocument();
   });
 
-  it('renders PDF preview with onFirstPageRender for initial centering', async () => {
+  it('renders PDF preview with onFirstPageRender for initial scroll placement', async () => {
     const pdfProps = {
       ...defaultProps,
       previewData: {

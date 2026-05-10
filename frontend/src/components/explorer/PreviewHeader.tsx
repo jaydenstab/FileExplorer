@@ -30,7 +30,7 @@ interface PreviewHeaderSuccessProps {
   onWrapToggle: () => void;
 }
 
-export type PreviewHeaderProps =
+type PreviewHeaderProps =
   | PreviewHeaderLoadingProps
   | PreviewHeaderErrorProps
   | PreviewHeaderSuccessProps;
@@ -141,8 +141,8 @@ export function PreviewHeader(props: PreviewHeaderProps) {
               <button
                 onClick={onZoomReset}
                 className="p-1.5 text-[var(--color-foreground)]/70 hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)] rounded transition-colors"
-                title="Reset zoom"
-                aria-label="Reset zoom"
+                title={isTextPreview ? 'Reset zoom' : 'Reset zoom (fit page width)'}
+                aria-label={isTextPreview ? 'Reset zoom' : 'Reset zoom to fit page width'}
               >
                 <RotateCcw className="w-4 h-4" />
               </button>

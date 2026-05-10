@@ -16,6 +16,16 @@ from .search_execution import (
 )
 from .search_params import parse_search_params
 from .api_response import api_error, api_ok
+from .path_policy import allowed_search_directories
+from .search_metadata import enrich_results_with_file_stats
+
+
+def _maybe_enrich_metadata(request, items):
+    if request.GET.get("include_metadata", "false").lower() not in ("1", "true", "yes"):
+        return items
+    return enrich_results_with_file_stats(
+        list(items), allowed_roots=allowed_search_directories()
+    )
 
 
 def _json_base(
@@ -137,6 +147,7 @@ def api_search(request):
         start = (page - 1) * page_size
         end = start + page_size
         items = all_results[start:end]
+        items = _maybe_enrich_metadata(request, items)
         has_next = len(all_results) > end
 
         return _json_base(
@@ -189,6 +200,8 @@ def api_search(request):
             tags=tags,
             tag_match=tag_match,
         )
+
+    results = _maybe_enrich_metadata(request, results)
 
     return _json_base(
         q=q,

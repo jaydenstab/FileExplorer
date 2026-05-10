@@ -5,15 +5,15 @@ from pathlib import Path
 
 from semantic_index.indexer import BASE_DIR
 
+from .document_roots import get_document_root_dirs
 from .file_store import get_library_dirname, get_library_root
 
-ALLOWED_DOCUMENT_DIRECTORIES = ["documents1", "documents2"]
 MAX_PATH_LENGTH = 1024
 
 
 def allowed_search_directories() -> list[str]:
     # Keep search/reindex strict to indexable roots.
-    return [*ALLOWED_DOCUMENT_DIRECTORIES, get_library_dirname()]
+    return [*get_document_root_dirs(), get_library_dirname()]
 
 
 def normalize_directory(directory: str) -> str:
@@ -29,7 +29,7 @@ def normalize_directory(directory: str) -> str:
 def resolve_project_relative_path(
     file_path: str, *, allowed_roots: list[str] | None = None
 ) -> Path:
-    allowed_roots = allowed_roots or ALLOWED_DOCUMENT_DIRECTORIES
+    allowed_roots = allowed_roots or get_document_root_dirs()
     if not file_path or len(file_path) > MAX_PATH_LENGTH:
         raise ValueError("invalid path")
     if "\x00" in file_path:

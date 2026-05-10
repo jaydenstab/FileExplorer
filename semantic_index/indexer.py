@@ -69,15 +69,13 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
     return chunks
 
 
-def _list_files(documents_dir: Path) -> List[Path]:
-    """Find all PDF and text files in the specified documents folder.
-    Files larger than MAX_FILE_SIZE_BYTES are skipped so they don't dominate search results.
-    """
-    documents_dir.mkdir(parents=True, exist_ok=True)
+def _indexable_paths_under(documents_dir: Path, *, limit: int | None) -> List[Path]:
+    """List PDF/txt under ``documents_dir`` within size limits; ``limit`` slices (``None`` = no cap)."""
+    if not documents_dir.is_dir():
+        return []
     files: List[Path] = []
     for ext in SUPPORTED_EXTS:
         files.extend(sorted(documents_dir.rglob(f"*{ext}")))
-    # Skip files over size threshold (prevents giant files from dominating results)
     within_size: List[Path] = []
     for f in files:
         try:
@@ -85,13 +83,29 @@ def _list_files(documents_dir: Path) -> List[Path]:
                 within_size.append(f)
         except OSError:
             continue  # Skip if we can't stat (e.g. permission, deleted)
-    return within_size[:MAX_FILES]
+    if limit is not None:
+        return within_size[:limit]
+    return within_size
+
+
+def _list_files(documents_dir: Path) -> List[Path]:
+    """Find all PDF and text files in the specified documents folder.
+    Files larger than MAX_FILE_SIZE_BYTES are skipped so they don't dominate search results.
+    """
+    documents_dir.mkdir(parents=True, exist_ok=True)
+    return _indexable_paths_under(documents_dir, limit=MAX_FILES)
 
 
 def list_indexable_files(directory: str) -> List[Path]:
     """PDF/txt paths under ``directory`` (relative to project root), respecting size and count limits."""
     documents_dir = BASE_DIR / directory
     return _list_files(documents_dir)
+
+
+def count_indexable_files_under(directory: str) -> int:
+    """Count PDF/txt under ``directory`` with no ``MAX_FILES`` cap (for folder rename preflight)."""
+    documents_dir = BASE_DIR / directory
+    return len(_indexable_paths_under(documents_dir, limit=None))
 
 
 def _relative_path(p: Path) -> str:

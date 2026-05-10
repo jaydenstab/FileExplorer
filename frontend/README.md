@@ -1,16 +1,35 @@
-# React + Vite
+# File Explorer frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Vite + React + TypeScript SPA for the AI File Explorer (search, preview, library, reindex UI).
 
-Currently, two official plugins are available:
+Full-stack setup, API reference, and CI notes: **[repository README](../README.md)**.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Prerequisites
 
-## React Compiler
+- Node.js (current LTS recommended)
+- Backend running (see root README) so API calls from `npm run dev` succeed
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Commands
 
-## Expanding the ESLint configuration
+| Command | Purpose |
+| --- | --- |
+| `npm install` | Install dependencies |
+| `npm run dev` | Vite dev server (default [http://localhost:5173/](http://localhost:5173/)) |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Serve production build locally |
+| `npm run lint` | ESLint |
+| `npm run test` | Vitest unit tests |
+| `npm run test:e2e` | Playwright only (needs Django on :8000 and preview on `E2E_BASE_URL`; or run `bash scripts/run-e2e.sh` from repo root — root README) |
+| `npm run verify:repo` | Lint + tests + repo hygiene (used in CI) |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Configuration
+
+- API base: `VITE_API_BASE_URL` (defaults to `/api` relative to the dev origin). See root README for Django port (`8000`).
+
+## Code layout
+
+Explorer UI and hooks live under `src/components/explorer/`. Conventions: [docs/REFACTOR_NOTES.md](../docs/REFACTOR_NOTES.md).
+
+## Dead code and exports
+
+From `frontend/`, run `npx knip@5` (no local install required) to find unused dependencies, exports, and files. Fix or suppress findings before large refactors.

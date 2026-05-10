@@ -9,13 +9,13 @@ import {
 } from './zoomInput';
 import { usePreviewZoomPreferences } from './usePreviewZoomPreferences';
 
-export interface UsePreviewZoomControlsParams {
+interface UsePreviewZoomControlsParams {
   isPdfPreview: boolean;
   hasZoomControls: boolean;
   currentContentPath: string | null;
 }
 
-export interface UsePreviewZoomControlsResult {
+interface UsePreviewZoomControlsResult {
   zoomPercent: number;
   wrapLines: boolean;
   setWrapLines: React.Dispatch<React.SetStateAction<boolean>>;
@@ -24,6 +24,12 @@ export interface UsePreviewZoomControlsResult {
   handleZoomIn: () => void;
   handleZoomOut: () => void;
   handleZoomReset: () => void;
+  /** PDF: when true, viewport may adjust zoom to fit scroll width (resize + reset). */
+  pdfFitWidthActive: boolean;
+  /** PDF: bump so the viewport re-measures fit-to-width (e.g. after reset). */
+  pdfFitWidthNonce: number;
+  /** PDF: apply zoom from fit-width measurement (no-op if user left fit mode). */
+  applyPdfFitWidthZoom: (percent: number) => void;
   /** Ref to attach to the panel container for wheel/keyboard and focus containment. */
   panelRef: React.RefObject<HTMLElement | null>;
   /** Debug: wheel tick count in DEV. */
@@ -36,7 +42,11 @@ export function usePreviewZoomControls({
   currentContentPath,
 }: UsePreviewZoomControlsParams): UsePreviewZoomControlsResult {
   const [zoomPercent, setZoomPercent] = useState(ZOOM_DEFAULT);
-  const [wrapLines, setWrapLines] = useState(false);
+  /** Default on: prose .txt in a narrow preview pane should not require horizontal scroll. */
+  const [wrapLines, setWrapLines] = useState(true);
+  const [pdfFitWidthActive, setPdfFitWidthActive] = useState(false);
+  const [pdfFitWidthNonce, setPdfFitWidthNonce] = useState(0);
+  const pdfFitWidthGateRef = useRef(false);
   const prevPathRef = useRef<string | null>(null);
   const { sensitivity, setSensitivity, getWheelThreshold } = usePreviewZoomPreferences();
   const zoomAccumulatorRef = useRef(
@@ -58,14 +68,33 @@ export function usePreviewZoomControls({
       prevPathRef.current = currentContentPath;
       zoomAccumulatorRef.current.reset();
       if (currentContentPath) {
-        setZoomPercent(ZOOM_DEFAULT);
-        setWrapLines(false);
+        setWrapLines(!isPdfPreview);
+        if (isPdfPreview) {
+          setPdfFitWidthActive(true);
+          pdfFitWidthGateRef.current = true;
+          setPdfFitWidthNonce((n) => n + 1);
+          setZoomPercent(ZOOM_DEFAULT);
+        } else {
+          setPdfFitWidthActive(false);
+          pdfFitWidthGateRef.current = false;
+          setZoomPercent(ZOOM_DEFAULT);
+        }
       }
     }
-  }, [currentContentPath]);
+  }, [currentContentPath, isPdfPreview]);
+
+  const applyPdfFitWidthZoom = useCallback((percent: number) => {
+    if (!isPdfPreview || !pdfFitWidthGateRef.current) return;
+    const clamped = Math.round(Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, percent)));
+    setZoomPercent(clamped);
+  }, [isPdfPreview]);
 
   const applyZoomDelta = useCallback(
     (stepDelta: number) => {
+      if (isPdfPreview) {
+        setPdfFitWidthActive(false);
+        pdfFitWidthGateRef.current = false;
+      }
       setZoomPercent((p) =>
         applyZoomStep(
           p,
@@ -80,7 +109,15 @@ export function usePreviewZoomControls({
 
   const handleZoomIn = useCallback(() => applyZoomDelta(1), [applyZoomDelta]);
   const handleZoomOut = useCallback(() => applyZoomDelta(-1), [applyZoomDelta]);
-  const handleZoomReset = useCallback(() => setZoomPercent(ZOOM_DEFAULT), []);
+  const handleZoomReset = useCallback(() => {
+    if (isPdfPreview) {
+      setPdfFitWidthActive(true);
+      pdfFitWidthGateRef.current = true;
+      setPdfFitWidthNonce((n) => n + 1);
+    } else {
+      setZoomPercent(ZOOM_DEFAULT);
+    }
+  }, [isPdfPreview]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -94,10 +131,10 @@ export function usePreviewZoomControls({
         applyZoomDelta(-1);
       } else if (e.key === '0') {
         e.preventDefault();
-        setZoomPercent(ZOOM_DEFAULT);
+        handleZoomReset();
       }
     },
-    [applyZoomDelta]
+    [applyZoomDelta, handleZoomReset]
   );
 
   const handleWheel = useCallback(
@@ -144,6 +181,9 @@ export function usePreviewZoomControls({
     handleZoomIn,
     handleZoomOut,
     handleZoomReset,
+    pdfFitWidthActive,
+    pdfFitWidthNonce,
+    applyPdfFitWidthZoom,
     panelRef,
     wheelTicksRef,
   };

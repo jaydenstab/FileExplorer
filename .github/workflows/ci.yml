@@ -47,51 +47,5 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: pip install -r requirements.txt
-      - name: Seed two-page PDF for literal search
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import fitz
-          Path("documents1").mkdir(parents=True, exist_ok=True)
-          doc = fitz.open()
-          doc.new_page().insert_text((72, 72), "e2e_page1")
-          doc.new_page().insert_text((72, 72), "e2e_page2_unique_scroll")
-          doc.save("documents1/e2e_two_page.pdf")
-          doc.close()
-          PY
-      - run: cd frontend && npm ci
-      - run: cd frontend && npm run build
-      - run: cd frontend && npx playwright install chromium --with-deps
-      - name: Run Playwright against Django + Vite preview
-        run: |
-          set -euo pipefail
-          cleanup() {
-            if [ -n "${VP_PID:-}" ]; then kill "$VP_PID" 2>/dev/null || true; wait "$VP_PID" 2>/dev/null || true; fi
-            if [ -n "${DJ_PID:-}" ]; then kill "$DJ_PID" 2>/dev/null || true; wait "$DJ_PID" 2>/dev/null || true; fi
-          }
-          trap cleanup EXIT
-
-          python manage.py runserver 0.0.0.0:8000 &
-          DJ_PID=$!
-          (cd frontend && npx vite preview --host 127.0.0.1 --port 5173) &
-          VP_PID=$!
-
-          wait_http() {
-            local url=$1 label=$2
-            local i=0
-            while [ "$i" -lt 60 ]; do
-              if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
-                echo "$label ready"
-                return 0
-              fi
-              i=$((i + 1))
-              sleep 1
-            done
-            echo "timeout waiting for $label ($url)" >&2
-            return 1
-          }
-          wait_http "http://127.0.0.1:8000/" "Django"
-          wait_http "http://127.0.0.1:5173/" "Vite preview"
-
-          (cd frontend && CI_E2E=1 E2E_BASE_URL=http://127.0.0.1:5173 npx playwright test)
+      - name: E2E (parity with scripts/run-e2e.sh)
+        run: bash scripts/run-e2e.sh

@@ -3,7 +3,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { getPdfJsLib } from '../../lib/pdfWorker';
 import { getPdfEmbedUrl } from '../../lib/api';
 
-export interface UsePdfDocumentResult {
+interface UsePdfDocumentResult {
   pdfDocRef: React.MutableRefObject<PDFDocumentProxy | null>;
   currentPathRef: React.MutableRefObject<string | null>;
   numPages: number;

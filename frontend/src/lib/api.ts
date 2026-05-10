@@ -1,3 +1,7 @@
+/**
+ * Central HTTP client for the Django API. Split by domain (search, fs, config) only if
+ * merge churn on this file becomes painful.
+ */
 // Backend API base URL - from environment variable
 const rawBase = import.meta.env.VITE_API_BASE_URL;
 const API_BASE_URL = (rawBase ?? '/api').replace(/\/+$/, '');
@@ -55,6 +59,9 @@ export interface SearchResultItem {
   path: string;
   distance?: number;
   rerank_score?: number;
+  mtime_ms?: number | null;
+  size_bytes?: number | null;
+  match_count?: number;
 }
 
 export interface SearchResponse {
@@ -78,6 +85,20 @@ export interface SearchOptions {
   fileTypes?: string[];
   /** Backend `search_mode`: semantic (embeddings) vs text (substring). */
   searchMode?: 'semantic' | 'text';
+  /** When true (default), search results include mtime_ms and size_bytes when available. */
+  includeFileMetadata?: boolean;
+}
+
+export interface RecentFileItem {
+  path: string;
+  mtime_ms: number;
+  size: number;
+  kind: string;
+}
+
+interface RecentFilesResponse {
+  items: RecentFileItem[];
+  directories: string[];
 }
 
 /** Text file preview - content is the file text */
@@ -199,6 +220,11 @@ export const searchFiles = async (
     if (options.fileTypes && options.fileTypes.length > 0) {
       params.set('file_types', options.fileTypes.join(','));
     }
+    if (options.includeFileMetadata !== false) {
+      params.set('include_metadata', 'true');
+    }
+  } else {
+    params.set('include_metadata', 'true');
   }
 
   const response = await fetch(`${API_BASE_URL}/search?${params.toString()}`, { signal });
@@ -251,23 +277,7 @@ export const getReindexStatus = async (jobId: string): Promise<ReindexStatusResp
   return response.json();
 };
 
-/**
- * Open a file via OS or return preview content.
- * @param path - Relative file path from project root (e.g., "documents1/file.pdf")
- * @param mode - "preview" to return content, "open_os" to open with OS app
- * @param signal - Optional AbortSignal for request cancellation
- */
-export async function openFile(
-  path: string,
-  mode: 'preview',
-  signal?: AbortSignal
-): Promise<PreviewData>;
-export async function openFile(
-  path: string,
-  mode: 'open_os',
-  signal?: AbortSignal
-): Promise<OpenOsSuccess>;
-export async function openFile(
+async function openFile(
   path: string,
   mode: 'preview' | 'open_os',
   signal?: AbortSignal
@@ -295,8 +305,64 @@ export async function openFile(
 }
 
 export const openPreview = (path: string, signal?: AbortSignal): Promise<PreviewData> =>
-  openFile(path, 'preview', signal);
+  openFile(path, 'preview', signal) as Promise<PreviewData>;
 
 export const openWithSystem = (path: string, signal?: AbortSignal): Promise<OpenOsSuccess> =>
-  openFile(path, 'open_os', signal);
+  openFile(path, 'open_os', signal) as Promise<OpenOsSuccess>;
 
+export async function fetchRecentFiles(
+  directories: string[],
+  limit = 15,
+  signal?: AbortSignal
+): Promise<RecentFilesResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (directories.length > 0) {
+    params.set('dirs', [...directories].sort().join(','));
+  }
+  const response = await fetch(`${API_BASE_URL}/recent?${params.toString()}`, { signal });
+  if (!response.ok) {
+    await errorFromResponse(response, 'Failed to load recent files');
+  }
+  return response.json() as Promise<RecentFilesResponse>;
+}
+
+interface FsRenameResponse {
+  path: string;
+  from?: string;
+  message?: string;
+  chunks_updated?: number;
+  /** Whether Chroma had indexed chunks for the old path before the index step. */
+  had_index_rows?: boolean;
+  index_updated?: boolean;
+  /** Present when the file moved on disk but the vector index may be stale. */
+  index_warning?: string;
+  /** Directory rename: number of indexable files migrated in Chroma. */
+  files_index_migrated?: number;
+}
+
+export async function fetchDocumentRoots(): Promise<string[]> {
+  const response = await fetch(`${API_BASE_URL}/config/document-roots`);
+  if (!response.ok) {
+    await errorFromResponse(response, 'Failed to load document roots');
+  }
+  const body = (await response.json()) as { roots?: string[] };
+  if (Array.isArray(body.roots) && body.roots.length > 0) {
+    return body.roots.map((x) => String(x).trim()).filter(Boolean);
+  }
+  return ['documents1', 'documents2'];
+}
+
+export async function renameFileOnDisk(
+  fromRel: string,
+  toRel: string
+): Promise<FsRenameResponse> {
+  const response = await fetch(`${API_BASE_URL}/fs/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: fromRel, to: toRel }),
+  });
+  if (!response.ok) {
+    await errorFromResponse(response, 'Rename failed');
+  }
+  return response.json() as Promise<FsRenameResponse>;
+}

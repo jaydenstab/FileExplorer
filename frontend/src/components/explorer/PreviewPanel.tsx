@@ -45,6 +45,9 @@ export function PreviewPanel({
     handleZoomIn,
     handleZoomOut,
     handleZoomReset,
+    pdfFitWidthActive,
+    pdfFitWidthNonce,
+    applyPdfFitWidthZoom,
     panelRef,
     wheelTicksRef,
   } = zoomControls;
@@ -79,8 +82,10 @@ export function PreviewPanel({
       if (currentContentPathRef.current !== path) return;
       const scrollEl = textViewportRef.current;
       if (!scrollEl) return;
-      const { scrollWidth, scrollHeight, clientWidth, clientHeight } = scrollEl;
-      const scrollLeft = Math.max(0, (scrollWidth - clientWidth) / 2);
+      const { scrollHeight, clientHeight } = scrollEl;
+      // LTR: start at the left edge. Horizontally centering wide pages showed only the
+      // middle vertical band on narrow viewports (every line looked cut off on both sides).
+      const scrollLeft = 0;
       const scrollTop =
         scrollHeight <= clientHeight
           ? Math.max(0, (scrollHeight - clientHeight) / 2)
@@ -160,13 +165,13 @@ export function PreviewPanel({
           <div
             ref={textViewportRef}
             data-testid="preview-scroll-root"
-            className="flex-1 overflow-auto p-4 min-h-0 overscroll-contain [contain:paint]"
+            className="flex-1 overflow-auto p-4 min-h-0 overscroll-contain"
             tabIndex={0}
             title="Cmd/Ctrl + scroll to zoom. Use - + buttons or Cmd/Ctrl +/- to zoom."
           >
             {previewData.type === 'text' ? (
               <pre
-                className="font-mono bg-[var(--color-background)] rounded p-3 border border-[var(--color-border)]/50 text-[var(--color-foreground)]"
+                className={`font-mono bg-[var(--color-background)] rounded p-3 border border-[var(--color-border)]/50 text-[var(--color-foreground)] max-w-full ${wrapLines ? 'break-words' : ''}`}
                 style={{
                   fontSize: `${(zoomPercent / 100) * 14}px`,
                   whiteSpace: wrapLines ? 'pre-wrap' : 'pre',
@@ -182,6 +187,9 @@ export function PreviewPanel({
                     zoomPercent={zoomPercent}
                     scrollRootRef={textViewportRef}
                     onFirstPageRender={centerPdfInitialScroll}
+                    pdfFitWidthActive={pdfFitWidthActive}
+                    pdfFitWidthNonce={pdfFitWidthNonce}
+                    onPdfFitWidthZoom={applyPdfFitWidthZoom}
                   />
                 ) : (
                   <div className="text-center max-w-sm p-6">

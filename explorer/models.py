@@ -14,3 +14,16 @@ class TaggedFile(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return self.path
+
+
+class ExplorerSettings(models.Model):
+    """Singleton-style row for explorer configuration (pk ``default``)."""
+
+    key = models.CharField(max_length=32, primary_key=True, default="default")
+    document_root_dirs = models.JSONField(default=list)
+
+    class Meta:
+        verbose_name_plural = "Explorer settings"
+
+    def __str__(self) -> str:  # pragma: no cover
+        return self.key

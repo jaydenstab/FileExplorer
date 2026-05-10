@@ -1,98 +1,32 @@
-# AI File Explorer - Development Guide
+# AI File Explorer — contributor context
 
-## Project Overview
-This is a Django-based file exploration and analysis project that combines core file management functionality with experimental AI-powered features. The project follows a modular architecture with clear separation between stable and experimental components.
+Use the repository **[README.md](../README.md)** for product overview, API examples (search, reindex, rename), CI, and environment variables. Use **[docs/REFACTOR_NOTES.md](../docs/REFACTOR_NOTES.md)** for frontend conventions (React Query, explorer hooks, controller composition).
 
-## Core Architecture
+## Stack
 
-### Main Components
-1. `backend/` - Django project configuration and core settings
-   - Uses Django 5.2.x with SQLite for development
-   - Configuration split between `settings.py` and `urls.py`
+- **Backend:** Django 5.x, SQLite by default, app package [`explorer/`](../explorer/) (views, URL includes, models including `ExplorerSettings` for persisted document root names).
+- **Indexing / search:** [`semantic_index/`](../semantic_index/) (ChromaDB under project `.chroma/`, embeddings, plaintext + semantic search).
+- **Frontend:** [`frontend/`](../frontend/) — Vite + React + TypeScript; explorer UI under `frontend/src/components/explorer/`.
 
-2. `explorer/` - Primary Django application
-   - Handles file exploration and web interface
-   - Minimalist views returning basic HTTP responses
-   - Extensible model layer for future data structures
+## URLs
 
-3. `experiments/` - Isolated experimental features
-   - `pdfparse/` - PDF text extraction using PyMuPDF
-   - `imageclassify/` - Image analysis capabilities (in development)
+- Root site: `backend/urls.py` maps `''` to explorer home and mounts **`path('api/', include('explorer.urls'))`** for JSON APIs.
+- API route definitions: [`explorer/urls.py`](../explorer/urls.py).
 
-### Data Flow
-- Web requests → `backend/urls.py` → `explorer/views.py` 
-- PDF processing: Files → `experiments/pdfparse` → `fitz` library → extracted text
-- All file paths are handled relative to execution directory for consistency
+## Path policy and document roots
 
-## Development Workflow
+Allowed paths for open/file/search/reindex combine persisted document root directory names (`get_document_root_dirs()` in [`explorer/document_roots.py`](../explorer/document_roots.py)) plus the library root. Do not reintroduce a hardcoded-only allow list without updating the DB-backed settings and migrations.
 
-### Environment Setup
-```bash
-# Activate Python virtual environment (required)
-source venv/bin/activate  # or your preferred venv activation
+## Tests
 
-# Install core dependencies
-pip install "django>=5.2,<6.0"
-pip install PyMuPDF  # for PDF processing
-```
+- Primary Django tests: [`explorer/tests.py`](../explorer/tests.py) — run `python manage.py test explorer` (matches CI scope).
+- Frontend: `cd frontend && npm run verify:repo`; E2E: see root README and [`frontend/e2e/`](../frontend/e2e/).
+- Optional HTTP smoke scripts (live server + `requests`): [`scripts/manual/`](../scripts/manual/).
 
-### Common Commands
-```bash
-# Start development server
-python manage.py runserver
+## Experiments
 
-# Database operations
-python manage.py migrate  # Apply migrations
-python manage.py makemigrations explorer  # Create new migrations
+Optional scripts under [`experiments/`](../experiments/) (e.g. [`experiments/pdfparse.py`](../experiments/pdfparse.py)) are not the main indexing path; production indexing flows through `semantic_index` and explorer APIs.
 
-# Run tests
-python manage.py test explorer
-```
+## Security
 
-## Key Integration Points
-
-### PDF Processing
-```python
-from experiments.pdfparse import get_text_from_odf
-
-# Always use absolute paths for PDF processing
-text = get_text_from_odf("/absolute/path/to/document.pdf")
-```
-
-### Adding New Views
-1. Define view in `explorer/views.py`
-2. Register URL in `backend/urls.py`
-3. Keep view logic minimal - delegate complex processing to appropriate modules
-
-## Project-Specific Patterns
-
-1. **Experimental Feature Isolation**
-   - All experimental code lives in `experiments/`
-   - Each feature gets its own subdirectory
-   - Main application stays clean of experimental code
-
-2. **Minimalist Views**
-   - Views in `explorer/views.py` are intentionally basic
-   - Complex logic belongs in models or utility modules
-   - Example: `def home(request): return HttpResponse("a")`
-
-3. **File Path Convention**
-   - Use absolute paths for file operations
-   - Paths are relative to execution directory
-   - PDF processing requires absolute paths
-
-## Testing
-- Core application tests in `explorer/tests.py`
-- Follow Django's test case patterns
-- Experimental features should have isolated tests
-
-## Architecture Decisions
-1. Separate `experiments/` directory to:
-   - Isolate unstable code from core functionality
-   - Allow rapid prototyping without affecting main app
-   - Provide clear boundary for experimental features
-
-2. Minimalist view layer to:
-   - Maintain clear separation of concerns
-   - Make testing and maintenance simpler
-   - Allow easy refactoring of UI/UX
+Read **[SECURITY.md](../SECURITY.md)** for CSRF-exempt endpoints, threat model, and path validation expectations before changing auth or exposing the server.

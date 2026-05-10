@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET
 from pypdf import PdfReader
 
 from .api_response import api_error, api_ok
-from .path_policy import ALLOWED_DOCUMENT_DIRECTORIES, resolve_project_relative_path
+from .path_policy import get_document_root_dirs, resolve_project_relative_path
 from .pdf_http import (
     content_disposition_inline,
     file_etag,
@@ -95,7 +95,7 @@ def api_open(request):
 
     try:
         full_path = resolve_project_relative_path(
-            file_path, allowed_roots=ALLOWED_DOCUMENT_DIRECTORIES
+            file_path, allowed_roots=get_document_root_dirs()
         )
     except ValueError:
         return api_error("path_forbidden", "Invalid or unauthorized file path", 403)
@@ -197,7 +197,7 @@ def api_file(request):
 
     try:
         full_path = resolve_project_relative_path(
-            file_path, allowed_roots=ALLOWED_DOCUMENT_DIRECTORIES
+            file_path, allowed_roots=get_document_root_dirs()
         )
     except ValueError:
         return api_error("path_forbidden", "Invalid or unauthorized file path", 403)

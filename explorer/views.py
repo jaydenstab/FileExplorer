@@ -20,6 +20,9 @@ from .views_library import (
     api_tags_for_file,
     api_tags_set,
 )
+from .views_recent import api_recent
+from .views_fs import api_fs_rename
+from .views_config import api_document_roots
 
 # Export all views for use in urls.py
 __all__ = [
@@ -37,6 +40,9 @@ __all__ = [
     "api_tags_list",
     "api_tags_for_file",
     "api_tags_set",
+    "api_recent",
+    "api_fs_rename",
+    "api_document_roots",
 ]
 
 

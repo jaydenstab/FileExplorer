@@ -41,6 +41,7 @@ export function useReindexStatus({
   const queryClient = useQueryClient();
   const prevJobIdRef = useRef<string | null>(null);
 
+  // Timer cleanup on unmount (non-React side effects).
   useEffect(() => {
     return () => {
       if (errorTimeoutRef.current) window.clearTimeout(errorTimeoutRef.current);
@@ -67,6 +68,7 @@ export function useReindexStatus({
     },
   });
 
+  // Map polled job status into StatusBar text, success flags, and delayed clears (not a fetch-on-X effect).
   useEffect(() => {
     if (reindexStatus?.status === 'indexing') {
       setStatusContribution({
@@ -92,6 +94,7 @@ export function useReindexStatus({
       queryClient.invalidateQueries({
         predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'search',
       });
+      queryClient.invalidateQueries({ queryKey: ['recent'] });
 
       if (statusTimeoutRef.current) window.clearTimeout(statusTimeoutRef.current);
       statusTimeoutRef.current = window.setTimeout(() => {
@@ -119,6 +122,7 @@ export function useReindexStatus({
     }
   }, [reindexStatus, queryClient]);
 
+  // Clear reindex status when jobId is dropped without a terminal status edge (defensive).
   useEffect(() => {
     if (prevJobIdRef.current && !jobId) {
       setStatusContribution((prev) => (prev?.type === 'reindex' ? null : prev));

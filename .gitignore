@@ -1,12 +1,25 @@
+# Cursor / local agent plans (do not commit)
+.cursor/
+
+# Local virtualenv (some developers use .venv instead of venv/)
+.venv/
+
 venv/
 __pycache__/
 *.pyc
 db.sqlite3
 .env
+
+# Security notes (local / optional; not tracked)
+SECURITY.md
 *.log
 .chroma
 *.sqlite
+frontend/test-results/
+
+# Local document corpora (personal testing; add your own files — not pushed to GitHub)
+documents1/
+documents2/
 
 # Frontend build output
 frontend/dist/
-frontend/test-results/

@@ -10,7 +10,7 @@ const MAIN_MIN_WIDTH_WHEN_PREVIEW_OPEN = 360;
 
 export default function App() {
   const controller = useExplorerController();
-  const { preview, feedback } = controller;
+  const { preview, feedback, recent } = controller;
 
   const hasPreview = !!(
     preview.previewData ||
@@ -22,8 +22,14 @@ export default function App() {
   return (
     <div className="h-screen bg-[var(--color-background)] flex overflow-hidden">
       <DirectorySidebar
+        directories={controller.documentRoots}
         selectedDirectories={controller.filters.selectedDirectories}
         onToggle={controller.filters.handleDirectoryToggle}
+        recentFiles={recent.files}
+        recentLoading={recent.isLoading}
+        recentError={recent.error}
+        onRecentFileClick={(file) => controller.preview.handleFileClick(file, 'preview')}
+        onRenameDocumentRoot={controller.rename.openRenameDialogForRoot}
       />
 
       {/* Two-column shell: results area + docked preview pane */}

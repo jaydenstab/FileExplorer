@@ -1,10 +1,18 @@
 import { useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { StatusState } from '../StatusBar';
 import { useExplorerState } from './useExplorerState';
 import { useExplorerSearch } from './useExplorerSearch';
 import { useReindexStatus } from './useReindexStatus';
 import { usePreviewPanel } from './usePreviewPanel';
 import { useExplorerFeedback } from './useExplorerFeedback';
+import { useExplorerRename, type ExplorerRename } from './useExplorerRename';
+import { fetchDocumentRoots } from '../../lib/api';
+import { useRecentFiles } from './useRecentFiles';
+import type { ResultsViewMode } from './types';
+import type { FileItem } from './types';
+
+export type { ExplorerRename } from './useExplorerRename';
 
 export interface ExplorerFilters {
   searchQuery: string;
@@ -63,22 +71,52 @@ export interface ExplorerFeedback {
   showNoResultsError: boolean;
 }
 
+export interface ExplorerShell {
+  resultsViewMode: ResultsViewMode;
+  setResultsViewMode: (v: ResultsViewMode | ((p: ResultsViewMode) => ResultsViewMode)) => void;
+  selectedResultIndex: number | null;
+  setSelectedResultIndex: (v: number | null | ((p: number | null) => number | null)) => void;
+}
+
+export interface ExplorerRecent {
+  files: FileItem[];
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => void;
+}
+
 export interface UseExplorerControllerResult {
+  /** Persisted document root names (sidebar scope). */
+  documentRoots: string[];
   filters: ExplorerFilters;
   search: ExplorerSearch;
   reindex: ExplorerReindex;
   preview: ExplorerPreview;
   feedback: ExplorerFeedback;
+  shell: ExplorerShell;
+  recent: ExplorerRecent;
+  rename: ExplorerRename;
 }
 
 export function useExplorerController(): UseExplorerControllerResult {
-  const state = useExplorerState();
+  const queryClient = useQueryClient();
+  const { data: documentRoots = ['documents1', 'documents2'] } = useQuery({
+    queryKey: ['documentRoots'],
+    queryFn: fetchDocumentRoots,
+    staleTime: 60_000,
+  });
+  const state = useExplorerState({ documentRootDirs: documentRoots });
   const {
     searchQuery,
     debouncedQuery,
     handleSearch,
+    resultsViewMode,
+    setResultsViewMode,
+    selectedResultIndex,
+    setSelectedResultIndex,
     selectedDirectories,
     handleDirectoryToggle,
+    replaceSelectedRootName,
     searchMode,
     setSearchMode,
     minConfidence,
@@ -117,6 +155,21 @@ export function useExplorerController(): UseExplorerControllerResult {
   });
 
   const preview = usePreviewPanel();
+
+  const {
+    data: recentFiles = [],
+    isLoading: recentLoading,
+    error: recentError,
+    refetch: refetchRecent,
+  } = useRecentFiles(selectedDirectories);
+
+  const rename = useExplorerRename({
+    queryClient,
+    replaceSelectedRootName,
+    previewHandleFileClick: preview.handleFileClick,
+    searchResults: search.searchResults,
+    setSelectedResultIndex,
+  });
 
   const feedback = useExplorerFeedback({
     search: {
@@ -256,11 +309,35 @@ export function useExplorerController(): UseExplorerControllerResult {
     ]
   );
 
+  const shell = useMemo(
+    (): ExplorerShell => ({
+      resultsViewMode,
+      setResultsViewMode,
+      selectedResultIndex,
+      setSelectedResultIndex,
+    }),
+    [resultsViewMode, setResultsViewMode, selectedResultIndex, setSelectedResultIndex]
+  );
+
+  const recentGroup = useMemo(
+    (): ExplorerRecent => ({
+      files: recentFiles,
+      isLoading: recentLoading,
+      error: recentError ?? null,
+      refetch: refetchRecent,
+    }),
+    [recentFiles, recentLoading, recentError, refetchRecent]
+  );
+
   return {
-    filters: filters,
+    documentRoots,
+    filters,
     search: searchGroup,
     reindex: reindexGroup,
     preview: previewGroup,
     feedback: feedbackGroup,
+    shell,
+    recent: recentGroup,
+    rename,
   };
 }
